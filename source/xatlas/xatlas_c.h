@@ -98,6 +98,7 @@ typedef struct
 {
 	xatlasChart *chartArray;
 	uint32_t *indexArray;
+	uint32_t *originalFaceArray;
 	xatlasVertex *vertexArray;
 	uint32_t chartCount;
 	uint32_t indexCount;

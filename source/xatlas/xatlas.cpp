@@ -8916,6 +8916,8 @@ static void DestroyOutputMeshes(Context *ctx)
 			XA_FREE(mesh.vertexArray);
 		if (mesh.indexArray)
 			XA_FREE(mesh.indexArray);
+		if (mesh.originalFaceArray)
+			XA_FREE(mesh.originalFaceArray);
 	}
 	XA_FREE(ctx->atlas.meshes);
 	ctx->atlas.meshes = nullptr;
@@ -9675,6 +9677,7 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 			}
 			outputMesh.vertexArray = XA_ALLOC_ARRAY(internal::MemTag::Default, Vertex, outputMesh.vertexCount);
 			outputMesh.indexArray = XA_ALLOC_ARRAY(internal::MemTag::Default, uint32_t, outputMesh.indexCount);
+			outputMesh.originalFaceArray = XA_ALLOC_ARRAY(internal::MemTag::Default, uint32_t, outputMesh.indexCount);
 			outputMesh.chartArray = XA_ALLOC_ARRAY(internal::MemTag::Default, Chart, outputMesh.chartCount);
 			XA_PRINT("   Mesh %u: %u vertices, %u triangles, %u charts\n", i, outputMesh.vertexCount, outputMesh.indexCount / 3, outputMesh.chartCount);
 			// Copy mesh data.
@@ -9695,8 +9698,10 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 				// Indices.
 				for (uint32_t f = 0; f < faces.length; f++) {
 					const uint32_t indexOffset = faces[f] * 3;
-					for (uint32_t j = 0; j < 3; j++)
+					for (uint32_t j = 0; j < 3; j++) {
 						outputMesh.indexArray[indexOffset + j] = indices[f * 3 + j];
+						outputMesh.originalFaceArray[indexOffset + j] = f;
+					}
 				}
 				firstVertex = vertices.length;
 			}
@@ -9748,6 +9753,7 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 							if (meshPolygonMapping)
 								outIndex = meshPolygonMapping->triangleToPolygonIndicesMap[outIndex];
 							outputMesh.indexArray[outIndex] = firstVertex + chart->originalVertices()[f * 3 + j];
+							outputMesh.originalFaceArray[outIndex] = chart->mapFaceToSourceFace(f);
 						}
 					}
 					// Charts.
@@ -9812,6 +9818,7 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 			outputMesh.chartCount = mesh->mesh->charts.size();
 			outputMesh.vertexArray = XA_ALLOC_ARRAY(internal::MemTag::Default, Vertex, outputMesh.vertexCount);
 			outputMesh.indexArray = XA_ALLOC_ARRAY(internal::MemTag::Default, uint32_t, outputMesh.indexCount);
+			outputMesh.originalFaceArray = XA_ALLOC_ARRAY(internal::MemTag::Default, uint32_t, outputMesh.indexCount);
 			outputMesh.chartArray = XA_ALLOC_ARRAY(internal::MemTag::Default, Chart, outputMesh.chartCount);
 			XA_PRINT("   UV mesh %u: %u vertices, %u triangles, %u charts\n", m, outputMesh.vertexCount, outputMesh.indexCount / 3, outputMesh.chartCount);
 			// Copy mesh data.
@@ -9834,6 +9841,8 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 			}
 			// Indices.
 			memcpy(outputMesh.indexArray, mesh->mesh->indices.data(), mesh->mesh->indices.size() * sizeof(uint32_t));
+			for (uint32_t i = 0; i < mesh->mesh->indices.size(); ++i)
+				outputMesh.originalFaceArray[i] = i / 3;
 			// Charts.
 			for (uint32_t c = 0; c < mesh->mesh->charts.size(); c++) {
 				Chart *outputChart = &outputMesh.chartArray[c];
