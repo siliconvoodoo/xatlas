@@ -197,7 +197,7 @@ static void RasterizePolygon(uint8_t *dest, int destWidth, int vertices[][2], co
 			}
 			j=i;
 		}
-		//  Sort the nodes, via a simple “Bubble” sort.
+		//  Sort the nodes, via a simple Bubble sort
 		i=0;
 		while (i<nodes-1) {
 			if (nodeX[i]>nodeX[i+1]) {
@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
 	if (argc < 2) {
 	    printf("Usage: %s input_file.obj [options]\n", argv[0]);
 		printf("  Options:\n");
-		printf("    -verbose\n");  
+		printf("    -verbose\n");
 	    return 1;
 	}
 	s_verbose = (argc >= 3 && STRICMP(argv[2], "-verbose") == 0);
