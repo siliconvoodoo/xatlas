@@ -3153,7 +3153,10 @@ public:
 		for (uint32_t i = 0; i < m_workers.size(); i++) {
 			Worker &worker = m_workers[i];
 			XA_DEBUG_ASSERT(worker.thread);
-			worker.wakeup = true;
+			{
+				std::unique_lock<std::mutex> lock(worker.mutex);
+				worker.wakeup = true;
+			}
 			worker.cv.notify_one();
 			if (worker.thread->joinable())
 				worker.thread->join();
