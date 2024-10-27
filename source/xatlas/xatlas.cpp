@@ -3459,16 +3459,19 @@ struct Triangulator
 {
 	// This is doing a simple ear-clipping algorithm that skips invalid triangles. Ideally, we should
 	// also sort the ears by angle, start with the ones that have the smallest angle and proceed in order.
-	void triangulatePolygon(ConstArrayView<Vector3> vertices, ConstArrayView<uint32_t> inputIndices, Array<uint32_t> &outputIndices)
+	void triangulatePolygon(ConstArrayView<Vector3> vertices, const Array<uint32_t>& inputIndices, Array<uint32_t> &outputIndices, Array<uint32_t> &outindicesIDs)
 	{
 		m_polygonVertices.clear();
-		m_polygonVertices.reserve(inputIndices.length);
+		m_polygonVertices.reserve(inputIndices.size());
 		outputIndices.clear();
-		if (inputIndices.length == 3) {
+		if (inputIndices.size() == 3) {
 			// Simple case for triangles.
 			outputIndices.push_back(inputIndices[0]);
 			outputIndices.push_back(inputIndices[1]);
 			outputIndices.push_back(inputIndices[2]);
+			outindicesIDs.push_back(0);
+			outindicesIDs.push_back(1);
+			outindicesIDs.push_back(2);
 		}
 		else {
 			// Build 2D polygon projecting vertices onto normal plane.
@@ -3478,15 +3481,18 @@ struct Triangulator
 			basis.normal = normalize(cross(vertices[inputIndices[1]] - vertices[inputIndices[0]], vertices[inputIndices[2]] - vertices[inputIndices[1]]));
 			basis.tangent = basis.computeTangent(basis.normal);
 			basis.bitangent = basis.computeBitangent(basis.normal, basis.tangent);
-			const uint32_t edgeCount = inputIndices.length;
+			const uint32_t edgeCount = inputIndices.size();
 			m_polygonPoints.clear();
 			m_polygonPoints.reserve(edgeCount);
 			m_polygonAngles.clear();
 			m_polygonAngles.reserve(edgeCount);
-			for (uint32_t i = 0; i < inputIndices.length; i++) {
+			// A temporary array for indicesIDs
+			Array<uint32_t> indicesIDsTmp;
+			for (uint32_t i = 0; i < inputIndices.size(); i++) {
 				m_polygonVertices.push_back(inputIndices[i]);
 				const Vector3 &pos = vertices[inputIndices[i]];
 				m_polygonPoints.push_back(Vector2(dot(basis.tangent, pos), dot(basis.bitangent, pos)));
+				indicesIDsTmp.push_back(i);
 			}
 			m_polygonAngles.resize(edgeCount);
 			while (m_polygonVertices.size() > 2) {
@@ -3534,7 +3540,11 @@ struct Triangulator
 				outputIndices.push_back(m_polygonVertices[i0]);
 				outputIndices.push_back(m_polygonVertices[i1]);
 				outputIndices.push_back(m_polygonVertices[i2]);
+				outindicesIDs.push_back(indicesIDsTmp[i0]);  // Add Index of Array of Vertex Indices
+				outindicesIDs.push_back(indicesIDsTmp[i1]);
+				outindicesIDs.push_back(indicesIDsTmp[i2]);
 				m_polygonVertices.removeAt(i1);
+				indicesIDsTmp.removeAt(i1);
 				m_polygonPoints.removeAt(i1);
 				m_polygonAngles.removeAt(i1);
 			}
@@ -9086,14 +9096,18 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 	const uint32_t kMaxWarnings = 50;
 	uint32_t warningCount = 0;
 	internal::Array<uint32_t> triIndices;
+	internal::Array<uint32_t> indicesIDs;
 	internal::Triangulator triangulator;
+	uint32_t polygonStartID = 0;
+	internal::Array<uint32_t> polygon;
 	for (uint32_t face = 0; face < faceCount; face++) {
 		// Decode face indices.
 		const uint32_t faceVertexCount = meshDecl.faceVertexCount ? (uint32_t)meshDecl.faceVertexCount[face] : 3;
-		uint32_t polygon[UINT8_MAX];
+		polygon.clear();
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
 			if (hasIndices) {
-				polygon[i] = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, face * faceVertexCount + i);
+				uint32_t vertID = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, polygonStartID + i);
+				polygon.push_back(vertID);
 				// Check if any index is out of range.
 				if (polygon[i] >= meshDecl.vertexCount) {
 					mesh->~Mesh();
@@ -9101,14 +9115,15 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 					return AddMeshError::IndexOutOfRange;
 				}
 			} else {
-				polygon[i] = face * faceVertexCount + i;
+				polygon[i] = polygonStartID + i;
 			}
 		}
+		
 		// Ignore faces with degenerate or zero length edges.
 		bool ignore = false;
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
 			const uint32_t index1 = polygon[i];
-			const uint32_t index2 = polygon[(i + 1) % 3];
+			const uint32_t index2 = polygon[(i + 1) % faceVertexCount];
 			if (index1 == index2) {
 				ignore = true;
 				if (++warningCount <= kMaxWarnings)
@@ -9156,12 +9171,16 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 		}
 		// Triangulate if necessary.
 		triIndices.clear();
+		indicesIDs.clear();
 		if (faceVertexCount == 3) {
 			triIndices.push_back(polygon[0]);
 			triIndices.push_back(polygon[1]);
 			triIndices.push_back(polygon[2]);
+			indicesIDs.push_back(0);
+			indicesIDs.push_back(1);
+			indicesIDs.push_back(2);
 		} else {
-			triangulator.triangulatePolygon(mesh->positions(), internal::ConstArrayView<uint32_t>(polygon, faceVertexCount), triIndices);
+			triangulator.triangulatePolygon(mesh->positions(), polygon, triIndices, indicesIDs);
 		}
 		// Check for zero area faces.
 		if (!ignore) {
@@ -9193,8 +9212,9 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 		}
 		if (meshPolygonMapping) {
 			for (uint32_t i = 0; i < triIndices.size(); i++)
-				meshPolygonMapping->triangleToPolygonIndicesMap.push_back(triIndices[i]);
+				meshPolygonMapping->triangleToPolygonIndicesMap.push_back(indicesIDs[i] + polygonStartID);
 		}
+		polygonStartID += faceVertexCount;  // Add an offset for the next polygon's start index
 	}
 	if (warningCount > kMaxWarnings)
 		XA_PRINT("   %u additional warnings truncated\n", warningCount - kMaxWarnings);
