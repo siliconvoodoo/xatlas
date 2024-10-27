@@ -9118,7 +9118,6 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 				polygon[i] = polygonStartID + i;
 			}
 		}
-		
 		// Ignore faces with degenerate or zero length edges.
 		bool ignore = false;
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
