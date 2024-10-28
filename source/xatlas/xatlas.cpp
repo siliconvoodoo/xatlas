@@ -8880,7 +8880,7 @@ private:
 // Used to map triangulated polygons back to polygons.
 struct MeshPolygonMapping
 {
-	internal::Array<uint8_t> faceVertexCount; // Copied from MeshDecl::faceVertexCount.
+	internal::Array<uint32_t> faceVertexCount; // Copied from MeshDecl::faceVertexCount.
 	internal::Array<uint32_t> triangleToPolygonMap; // Triangle index (mesh face index) to polygon index.
 	internal::Array<uint32_t> triangleToPolygonIndicesMap; // Triangle indices to polygon indices.
 };
