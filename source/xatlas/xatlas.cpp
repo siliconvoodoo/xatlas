@@ -9184,17 +9184,18 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 		}
 		// Check for zero area faces.
 		if (!ignore) {
+			float area;  // Area of all triangles of the polygon.
 			for (uint32_t i = 0; i < triIndices.size(); i += 3) {
 				const internal::Vector3 &a = mesh->position(triIndices[i + 0]);
 				const internal::Vector3 &b = mesh->position(triIndices[i + 1]);
 				const internal::Vector3 &c = mesh->position(triIndices[i + 2]);
-				const float area = internal::length(internal::cross(b - a, c - a)) * 0.5f;
-				if (area <= internal::kAreaEpsilon) {
-					ignore = true;
-					if (++warningCount <= kMaxWarnings)
-						XA_PRINT("   Zero area face: %d, area is %f\n", face, area);
-					break;
-				}
+				area += internal::length(internal::cross(b - a, c - a)) * 0.5f;
+				if (area > internal::kAreaEpsilon) break;  // Optimisation for high polygonal NGons
+			}
+			if (area <= internal::kAreaEpsilon) {
+				ignore = true;
+				if (++warningCount <= kMaxWarnings)
+					XA_PRINT("   Zero area face: %d, area is %f\n", face, area);
 			}
 		}
 		// User face ignore.
