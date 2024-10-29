@@ -9184,7 +9184,7 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 		}
 		// Check for zero area faces.
 		if (!ignore) {
-			float area;  // Area of all triangles of the polygon.
+			float area = 0.0f;  // Area of all triangles of the polygon.
 			for (uint32_t i = 0; i < triIndices.size(); i += 3) {
 				const internal::Vector3 &a = mesh->position(triIndices[i + 0]);
 				const internal::Vector3 &b = mesh->position(triIndices[i + 1]);
