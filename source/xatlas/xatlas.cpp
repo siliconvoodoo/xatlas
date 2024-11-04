@@ -2798,6 +2798,9 @@ private:
 	HashMap<EdgeKey, EdgeHash> m_edgeMap;
 
 public:
+	// Quads/NGons IDs. Triangle id is a number, Quad/NGon id is a value. It can be empty if there is no polygon mapping.
+	Array<uint32_t> trianglesToPolygonIDs;  // Triangle index (mesh face index) to Quad/NGon index.
+
 	class FaceEdgeIterator
 	{
 	public:
@@ -3461,9 +3464,8 @@ struct Triangulator
 	// also sort the ears by angle, start with the ones that have the smallest angle and proceed in order.
 	void triangulatePolygon(ConstArrayView<Vector3> vertices, const Array<uint32_t>& inputIndices, Array<uint32_t> &outputIndices, Array<uint32_t> &outindicesIDs)
 	{
-		m_polygonVertices.clear();
-		m_polygonVertices.reserve(inputIndices.size());
 		outputIndices.clear();
+		outindicesIDs.clear();
 		if (inputIndices.size() == 3) {
 			// Simple case for triangles.
 			outputIndices.push_back(inputIndices[0]);
@@ -3472,6 +3474,21 @@ struct Triangulator
 			outindicesIDs.push_back(0);
 			outindicesIDs.push_back(1);
 			outindicesIDs.push_back(2);
+		}
+		else if (inputIndices.size() == 3) {
+			// Simple case for quads.
+			outputIndices.push_back(inputIndices[0]);
+			outputIndices.push_back(inputIndices[1]);
+			outputIndices.push_back(inputIndices[2]);
+			outindicesIDs.push_back(0);
+			outindicesIDs.push_back(1);
+			outindicesIDs.push_back(2);
+			outputIndices.push_back(inputIndices[0]);
+			outputIndices.push_back(inputIndices[2]);
+			outputIndices.push_back(inputIndices[3]);
+			outindicesIDs.push_back(0);
+			outindicesIDs.push_back(2);
+			outindicesIDs.push_back(3);
 		}
 		else {
 			// Build 2D polygon projecting vertices onto normal plane.
@@ -3488,6 +3505,8 @@ struct Triangulator
 			m_polygonAngles.reserve(edgeCount);
 			m_indicesIDs.clear();
 			m_indicesIDs.reserve(edgeCount);
+			m_polygonVertices.clear();
+			m_polygonVertices.reserve(inputIndices.size());
 			for (uint32_t i = 0; i < inputIndices.size(); i++) {
 				m_polygonVertices.push_back(inputIndices[i]);
 				const Vector3 &pos = vertices[inputIndices[i]];
@@ -5186,14 +5205,22 @@ struct PlanarCharts
 		m_regionFirstFace.clear();
 		m_nextRegionFace.resize(faceCount);
 		m_faceToRegionId.resize(faceCount);
+		const bool hasQuadsOrNGons = m_data.mesh->trianglesToPolygonIDs.size() > 0 ? true : false;
+		Array<bool> parsedFaces;  // For Quads/NGons
+		if (hasQuadsOrNGons)
+			parsedFaces.resize(faceCount);
 		for (uint32_t f = 0; f < faceCount; f++) {
 			m_nextRegionFace[f] = f;
 			m_faceToRegionId[f] = UINT32_MAX;
+			if (hasQuadsOrNGons)
+				parsedFaces[f] = false;  // Set default value (false)
 		}
 		Array<uint32_t> faceStack;
 		faceStack.reserve(min(faceCount, 16u));
 		uint32_t regionCount = 0;
 		for (uint32_t f = 0; f < faceCount; f++) {
+			if (hasQuadsOrNGons)
+				if (parsedFaces[f]) continue;  // No need to parse as we already parsed a triangle of a Quad/NGon.
 			if (m_nextRegionFace[f] != f)
 				continue; // Already assigned.
 			if (m_data.isFaceInChart.get(f))
@@ -5214,6 +5241,19 @@ struct PlanarCharts
 						continue; // Already assigned.
 					if (m_data.isFaceInChart.get(oface))
 						continue; // Already in a chart.
+					// if Triangle is a part of a Quad/NGon.
+					if (hasQuadsOrNGons) {
+						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface]) {
+							const uint32_t next = m_nextRegionFace[face];
+							m_nextRegionFace[face] = oface;
+							m_nextRegionFace[oface] = next;
+							m_faceToRegionId[oface] = regionCount;
+							faceStack.push_back(oface);
+							parsedFaces[oface] = true; // set parsed
+							parsedFaces[face] = true;  // set parsed
+							continue;
+						}
+					}
 					if (!equal(dot(m_data.faceNormals[face], m_data.faceNormals[oface]), 1.0f, kEpsilon))
 						continue; // Not coplanar.
 					const uint32_t next = m_nextRegionFace[face];
@@ -5271,6 +5311,10 @@ struct PlanarCharts
 					const uint32_t oface = it.oppositeFace();
 					if (m_faceToRegionId[oface] == region)
 						continue; // Ignore internal edges.
+					if (hasQuadsOrNGons) {  // Accept an entire NGon. As potentially it should be flat.
+						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface])
+							continue; // if Triangle is a part of a Quad/NGon.
+					}
 					const float angle = m_data.edgeDihedralAngles[it.edge()];
 					if (angle > 0.0f && angle < FLT_MAX) { // FLT_MAX on boundaries.
 						createChart = false;
@@ -5635,21 +5679,28 @@ private:
 private:
 	void createChart(float threshold)
 	{
-		Chart *chart = XA_NEW(MemTag::Default, Chart);
-		chart->id = (int)m_charts.size();
-		m_charts.push_back(chart);
 		// Pick a face not used by any chart yet, belonging to the largest planar region.
-		chart->seed = 0;
 		float largestArea = 0.0f;
-		for (uint32_t f = 0; f < m_data.mesh->faceCount(); f++) {
+		const uint32_t faceCount = m_data.mesh->faceCount();
+		bool isPickedFace = false;
+		uint32_t seed = 0;
+		for (uint32_t f = 0; f < faceCount; f++) {
 			if (m_data.isFaceInChart.get(f))
 				continue;
 			const float area = m_planarCharts.regionArea(m_planarCharts.regionIdFromFace(f));
 			if (area > largestArea) {
 				largestArea = area;
-				chart->seed = f;
+				seed = f;
+				isPickedFace = true;
 			}
 		}
+		if (!isPickedFace && m_data.isFaceInChart.get(seed))
+			return;  // all faces are already added to charts.
+		// Create a new Chart and do further changes.
+		Chart *chart = XA_NEW(MemTag::Default, Chart);
+		chart->id = (int)m_charts.size();
+		m_charts.push_back(chart);
+		chart->seed = seed;
 		addFaceToChart(chart, chart->seed);
 		// Grow the chart as much as possible within the given threshold.
 		for (;;) {
@@ -5658,7 +5709,7 @@ private:
 			const uint32_t f = chart->candidates.pop();
 			if (m_data.isFaceInChart.get(f))
 				continue;
-			if (!addFaceToChart(chart, f)) {
+			if (!addFaceToChart(chart, f)) {  // If Failed to add a triangle
 				chart->failedPlanarRegions.push_back(m_planarCharts.regionIdFromFace(f));
 				continue;
 			}
@@ -5747,6 +5798,8 @@ private:
 		XA_DEBUG_ASSERT(!m_data.isFaceInChart.get(face));
 		const uint32_t oldFaceCount = chart->faces.size();
 		const bool firstFace = oldFaceCount == 0;
+		const bool hasQuadsOrNGons = m_data.mesh->trianglesToPolygonIDs.size() > 0 ? true : false;
+		const uint32_t meshFaceCount = m_data.mesh->faceCount();
 		// Append the face and any coplanar connected faces to the chart faces array.
 		chart->faces.push_back(face);
 		uint32_t coplanarFace = m_planarCharts.nextRegionFace(face);
@@ -5754,6 +5807,35 @@ private:
 			XA_DEBUG_ASSERT(!m_data.isFaceInChart.get(coplanarFace));
 			chart->faces.push_back(coplanarFace);
 			coplanarFace = m_planarCharts.nextRegionFace(coplanarFace);
+		}
+		if (hasQuadsOrNGons) {
+			// Add missing triangles of Quad/NGon
+			const uint32_t faceCountTmp = chart->faces.size();
+			for (uint32_t i = oldFaceCount; i < faceCountTmp; i++) {  // Run Forward
+				const uint32_t i_face = chart->faces[i];
+				const uint32_t faceQuadOrNGonID = m_data.mesh->trianglesToPolygonIDs[i_face];
+				const uint32_t nextFace = i_face + 1;
+				for (uint32_t f = nextFace; f < meshFaceCount; f++) {
+					if (m_data.mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
+						if (!chart->faces.contains(f)) {
+							chart->faces.push_back(f);
+						}
+					}
+					else {break;}
+				}
+				if (i_face > 0) {  // Run Backward
+					int32_t f = static_cast<int32_t>(i_face) - 1;
+					while (f >= 0) {
+						if (m_data.mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
+							if (!chart->faces.contains(f)) {
+								chart->faces.push_back(f);
+							}
+						}
+						else {break;}
+						--f;
+					}
+				}
+			}
 		}
 		const uint32_t faceCount = chart->faces.size();
 		// Compute basis.
@@ -7156,6 +7238,9 @@ public:
 		m_originalIndices.resize(faces.length * 3);
 		// Add geometry.
 		const uint32_t faceCount = faces.length;
+		const bool hasQuadsOrNGons = sourceMesh->trianglesToPolygonIDs.size() > 0 ? true : false;
+		if (hasQuadsOrNGons)
+			m_unifiedMesh->trianglesToPolygonIDs.resize(faceCount);  // Resize an Array Before copying some IDs
 		for (uint32_t f = 0; f < faceCount; f++) {
 			uint32_t unifiedIndices[3];
 			for (uint32_t i = 0; i < 3; i++) {
@@ -7183,6 +7268,9 @@ public:
 				XA_DEBUG_ASSERT(unifiedIndices[i] != UINT32_MAX);
 			}
 			m_unifiedMesh->addFace(unifiedIndices);
+			// Add TriangleIDs and PolygonIDs
+			if (hasQuadsOrNGons)
+				m_unifiedMesh->trianglesToPolygonIDs[f] = sourceMesh->trianglesToPolygonIDs[m_faceToSourceFaceMap[f]];
 		}
 		m_unifiedMesh->createBoundaries();
 		if (m_generatorType == segment::ChartGeneratorType::Planar) {
@@ -7205,6 +7293,7 @@ public:
 	{
 		const uint32_t faceCount = faces.length;
 		m_faceToSourceFaceMap.resize(faceCount);
+		const bool hasQuadsOrNGons = sourceMesh->trianglesToPolygonIDs.size() > 0 ? true : false;
 		for (uint32_t i = 0; i < faceCount; i++)
 			m_faceToSourceFaceMap[i] = parent->m_faceToSourceFaceMap[faces[i]]; // Map faces to parent chart source mesh.
 		// Copy face indices.
@@ -7234,6 +7323,8 @@ public:
 		}
 		// Add faces.
 		m_originalIndices.resize(faceCount * 3);
+		if (hasQuadsOrNGons)  // NOTE FOR FUTURE! Maybe "parentMesh" should be used instead of "sourceMesh"
+			m_unifiedMesh->trianglesToPolygonIDs.resize(faceCount);  // Resize an Array Before copying some IDs
 		for (uint32_t f = 0; f < faceCount; f++) {
 			uint32_t unifiedIndices[3];
 			for (uint32_t i = 0; i < 3; i++) {
@@ -7243,6 +7334,9 @@ public:
 				unifiedIndices[i] = sourceVertexToUnifiedVertexMap.get(unifiedVertex);
 			}
 			m_unifiedMesh->addFace(unifiedIndices);
+			// Add TriangleIDs and PolygonIDs
+			if (hasQuadsOrNGons)  // NOTE FOR FUTURE! Maybe "parentMesh" should be used instead of "sourceMesh"
+				m_unifiedMesh->trianglesToPolygonIDs[f] = sourceMesh->trianglesToPolygonIDs[m_faceToSourceFaceMap[f]];
 		}
 		m_unifiedMesh->createBoundaries();
 		// Need to store texcoords for backup/restore so packing can be run multiple times.
@@ -7291,7 +7385,8 @@ public:
 			// Computing charts checks for flipped triangles and boundary intersection. Don't need to do that again here if chart is planar.
 			if (m_type != ChartType::Planar && m_generatorType != segment::ChartGeneratorType::OriginalUv) {
 				XA_PROFILE_START(parameterizeChartsEvaluateQuality)
-				m_quality.computeBoundaryIntersection(m_unifiedMesh, boundaryGrid);
+				if (options.computeBoundaryIntersection)  // intersect edges. It can create artifacts (little peeces).
+					m_quality.computeBoundaryIntersection(m_unifiedMesh, boundaryGrid);
 				m_quality.computeFlippedFaces(m_unifiedMesh, nullptr);
 				m_quality.computeMetrics(m_unifiedMesh);
 				XA_PROFILE_END(parameterizeChartsEvaluateQuality)
@@ -7308,7 +7403,8 @@ public:
 					computeLeastSquaresConformalMap(m_unifiedMesh);
 				XA_PROFILE_END(parameterizeChartsLSCM)
 				XA_PROFILE_START(parameterizeChartsEvaluateQuality)
-				m_quality.computeBoundaryIntersection(m_unifiedMesh, boundaryGrid);
+				if (options.computeBoundaryIntersection)  // intersect edges. It can create artifacts (little peeces).
+					m_quality.computeBoundaryIntersection(m_unifiedMesh, boundaryGrid);
 #if XA_DEBUG_EXPORT_OBJ_INVALID_PARAMETERIZATION
 				m_quality.computeFlippedFaces(m_unifiedMesh, &m_paramFlippedFaces);
 #else
@@ -7680,6 +7776,9 @@ private:
 		const uint32_t approxVertexCount = min(faceCount * 3, m_sourceMesh->vertexCount());
 		Mesh *mesh = XA_NEW_ARGS(MemTag::Mesh, Mesh, m_sourceMesh->epsilon(), approxVertexCount, faceCount, m_sourceMesh->flags() & MeshFlags::HasNormals);
 		HashMap<uint32_t, PassthroughHash<uint32_t>> sourceVertexToVertexMap(MemTag::Mesh, approxVertexCount);
+		const bool hasQuadsOrNGons = m_sourceMesh->trianglesToPolygonIDs.size() > 0 ? true : false;
+		if (hasQuadsOrNGons)
+			mesh->trianglesToPolygonIDs.resize(faceCount);  // Resize an Array before copying some IDs
 		for (uint32_t f = 0; f < faceCount; f++) {
 			const uint32_t face = m_faceToSourceFaceMap[f];
 			for (uint32_t i = 0; i < 3; i++) {
@@ -7692,6 +7791,9 @@ private:
 					mesh->addVertex(m_sourceMesh->position(vertex), normal, m_sourceMesh->texcoord(vertex));
 				}
 			}
+			// Add TriangleIDs and PolygonIDs
+			if (hasQuadsOrNGons)
+				mesh->trianglesToPolygonIDs[f] = m_sourceMesh->trianglesToPolygonIDs[m_faceToSourceFaceMap[f]];
 		}
 		// Add faces.
 		for (uint32_t f = 0; f < faceCount; f++) {
@@ -9099,24 +9201,27 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 	internal::Array<uint32_t> triIndices;
 	internal::Array<uint32_t> indicesIDs;
 	internal::Triangulator triangulator;
-	uint32_t polygonStartID = 0;
+	uint32_t polygonVertexStartID = 0;
 	internal::Array<uint32_t> polygon;
+	bool hasQuadsOrNGons = false;
 	for (uint32_t face = 0; face < faceCount; face++) {
 		// Decode face indices.
 		const uint32_t faceVertexCount = meshDecl.faceVertexCount ? (uint32_t)meshDecl.faceVertexCount[face] : 3;
 		polygon.clear();
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
 			if (hasIndices) {
-				uint32_t vertID = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, polygonStartID + i);
+				uint32_t vertID = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, polygonVertexStartID + i);
 				polygon.push_back(vertID);
+				if (faceVertexCount > 3) hasQuadsOrNGons = true;  // Mesh has Quads or NGons.
 				// Check if any index is out of range.
-				if (polygon[i] >= meshDecl.vertexCount) {
+				if (polygon[i] >= meshDecl.vertexCount
+					|| faceVertexCount < 3) {
 					mesh->~Mesh();
 					XA_FREE(mesh);
 					return AddMeshError::IndexOutOfRange;
 				}
 			} else {
-				polygon[i] = polygonStartID + i;
+				polygon[i] = polygonVertexStartID + i;
 			}
 		}
 		// Ignore faces with degenerate or zero length edges.
@@ -9213,10 +9318,13 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 		}
 		if (meshPolygonMapping) {
 			for (uint32_t i = 0; i < triIndices.size(); i++)
-				meshPolygonMapping->triangleToPolygonIndicesMap.push_back(indicesIDs[i] + polygonStartID);
+				meshPolygonMapping->triangleToPolygonIndicesMap.push_back(indicesIDs[i] + polygonVertexStartID);
 		}
-		polygonStartID += faceVertexCount;  // Add an offset for the next polygon's start index
+		polygonVertexStartID += faceVertexCount;  // Add an offset for the next polygon's start index
 	}
+	// Add TriangleIDs and PolygonIDs if we have Quads/NGons
+	if (meshPolygonMapping && hasQuadsOrNGons)
+		meshPolygonMapping->triangleToPolygonMap.copyTo(mesh->trianglesToPolygonIDs);
 	if (warningCount > kMaxWarnings)
 		XA_PRINT("   %u additional warnings truncated\n", warningCount - kMaxWarnings);
 	XA_PROFILE_END(addMeshCopyData)
