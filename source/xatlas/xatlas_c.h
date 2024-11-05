@@ -191,7 +191,6 @@ typedef struct
 	uint32_t maxIterations;
 	bool useInputMeshUvs;
 	bool fixWinding;
-	bool computeBoundaryIntersection;
 }
 xatlasChartOptions;
 
