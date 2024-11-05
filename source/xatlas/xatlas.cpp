@@ -9092,13 +9092,14 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 	uint32_t warningCount = 0;
 	internal::Array<uint32_t> triIndices;
 	internal::Triangulator triangulator;
+	uint32_t currentFaceStartIndex = 0;
 	for (uint32_t face = 0; face < faceCount; face++) {
 		// Decode face indices.
 		const uint32_t faceVertexCount = meshDecl.faceVertexCount ? (uint32_t)meshDecl.faceVertexCount[face] : 3;
 		uint32_t polygon[UINT8_MAX];
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
 			if (hasIndices) {
-				polygon[i] = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, face * faceVertexCount + i);
+				polygon[i] = DecodeIndex(meshDecl.indexFormat, meshDecl.indexData, meshDecl.indexOffset, currentFaceStartIndex + i);
 				// Check if any index is out of range.
 				if (polygon[i] >= meshDecl.vertexCount) {
 					mesh->~Mesh();
@@ -9106,9 +9107,10 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 					return AddMeshError::IndexOutOfRange;
 				}
 			} else {
-				polygon[i] = face * faceVertexCount + i;
+				polygon[i] = currentFaceStartIndex + i;
 			}
 		}
+		currentFaceStartIndex += faceVertexCount;
 		// Ignore faces with degenerate or zero length edges.
 		bool ignore = false;
 		for (uint32_t i = 0; i < faceVertexCount; i++) {
