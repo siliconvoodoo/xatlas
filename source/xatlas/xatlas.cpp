@@ -3475,7 +3475,7 @@ struct Triangulator
 			outindicesIDs.push_back(1);
 			outindicesIDs.push_back(2);
 		}
-		else if (inputIndices.size() == 3) {
+		else if (inputIndices.size() == 4) {
 			// Simple case for quads.
 			outputIndices.push_back(inputIndices[0]);
 			outputIndices.push_back(inputIndices[1]);
