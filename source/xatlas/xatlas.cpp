@@ -5243,14 +5243,14 @@ struct PlanarCharts
 						continue; // Already in a chart.
 					// if Triangle is a part of a Quad/NGon.
 					if (hasQuadsOrNGons) {
-						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface]) {
+						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface]
+							&& face != oface) {
 							const uint32_t next = m_nextRegionFace[face];
 							m_nextRegionFace[face] = oface;
 							m_nextRegionFace[oface] = next;
 							m_faceToRegionId[oface] = regionCount;
 							faceStack.push_back(oface);
 							parsedFaces[oface] = true; // set parsed
-							parsedFaces[face] = true;  // set parsed
 							continue;
 						}
 					}
@@ -6899,11 +6899,11 @@ private:
 			}
 			XA_DEBUG_ASSERT(freeVertex != UINT32_MAX);
 			if (m_vertexInPatch.get(freeVertex)) {
-// #if 0
+#if 0
 				// If the free vertex is already in the patch, the face is enclosed by the patch. Add the face to the patch - don't need to assign texcoords.
 				freeVertex = UINT32_MAX;
 				addFaceToPatch(oface);
-// #endif
+#endif
 				continue;
 			}
 			// Check this here rather than above so faces enclosed by the patch are always added.
