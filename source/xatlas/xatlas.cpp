@@ -6801,38 +6801,39 @@ struct PiecewiseParam
 				XA_PROFILE_END(parameterizeChartsPiecewiseBoundaryIntersection)
 			}
 		}
-		if (hasQuadsOrNGons) {
-			// Add other triangles of already added Quads/NGons
-			for (uint32_t f1 = 0; f1 < m_patch.size(); f1++) {
-				const uint32_t i_face = m_patch[f1];
-				const uint32_t faceQuadOrNGonID = m_mesh->trianglesToPolygonIDs[i_face];
-				const uint32_t nextFace = i_face + 1;
-				for (uint32_t f = nextFace; f < faceCount; f++) {
-					if (m_mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
-						if (!m_faceInAnyPatch.get(f)) {
-								m_patch.push_back(f);
-								m_faceInPatch.set(f);
-								m_faceInAnyPatch.set(f);
-						}
-					}
-					else {break;}
-				}
-				if (i_face > 0) {  // Run Backward
-					int32_t f = static_cast<int32_t>(i_face) - 1;
-					while (f >= 0) {
-						if (m_mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
-							if (!m_faceInAnyPatch.get(f)) {
-								m_patch.push_back(f);
-								m_faceInPatch.set(f);
-								m_faceInAnyPatch.set(f);
-							}
-						}
-						else {break;}
-						--f;
-					}
-				}
-			}
-		}
+		// // Still it makes artifacts for Quads/NGons. We need a different approach.
+		// if (hasQuadsOrNGons) {
+		// 	// Add other triangles of already added Quads/NGons
+		// 	for (uint32_t f1 = 0; f1 < m_patch.size(); f1++) {
+		// 		const uint32_t i_face = m_patch[f1];
+		// 		const uint32_t faceQuadOrNGonID = m_mesh->trianglesToPolygonIDs[i_face];
+		// 		const uint32_t nextFace = i_face + 1;
+		// 		for (uint32_t f = nextFace; f < faceCount; f++) {
+		// 			if (m_mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
+		// 				if (!m_faceInAnyPatch.get(f)) {
+		// 						m_patch.push_back(f);
+		// 						m_faceInPatch.set(f);
+		// 						m_faceInAnyPatch.set(f);
+		// 				}
+		// 			}
+		// 			else {break;}
+		// 		}
+		// 		if (i_face > 0) {  // Run Backward
+		// 			int32_t f = static_cast<int32_t>(i_face) - 1;
+		// 			while (f >= 0) {
+		// 				if (m_mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
+		// 					if (!m_faceInAnyPatch.get(f)) {
+		// 						m_patch.push_back(f);
+		// 						m_faceInPatch.set(f);
+		// 						m_faceInAnyPatch.set(f);
+		// 					}
+		// 				}
+		// 				else {break;}
+		// 				--f;
+		// 			}
+		// 		}
+		// 	}
+		// }
 		return true;
 	}
 
@@ -7408,6 +7409,7 @@ public:
 	void parameterize(const ChartOptions &options, UniformGrid2 &boundaryGrid)
 	{
 		const uint32_t unifiedVertexCount = m_unifiedMesh->vertexCount();
+		const bool hasQuadsOrNGons = m_unifiedMesh->trianglesToPolygonIDs.size() > 0 ? true : false;
 		if (m_generatorType == segment::ChartGeneratorType::OriginalUv) {
 		} else {
 			// Project vertices to plane.
@@ -7443,7 +7445,8 @@ public:
 #endif
 				// Don't need to call computeMetrics here, that's only used in evaluateOrthoQuality to determine if quality is acceptable enough to use ortho projection.
 				if (m_quality.boundaryIntersection || m_quality.flippedTriangleCount > 0 || m_quality.zeroAreaTriangleCount > 0)
-					m_isInvalid = true;
+					if (!hasQuadsOrNGons)  // PiecewiseParam::computeChart() doesn't support Quads/NGons 
+						m_isInvalid = true;
 				XA_PROFILE_END(parameterizeChartsEvaluateQuality)
 			}
 		}
