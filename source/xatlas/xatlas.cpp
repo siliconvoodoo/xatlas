@@ -3475,21 +3475,21 @@ struct Triangulator
 			outindicesIDs.push_back(1);
 			outindicesIDs.push_back(2);
 		}
-		else if (inputIndices.size() == 4) {
-			// Simple case for quads.
-			outputIndices.push_back(inputIndices[0]);
-			outputIndices.push_back(inputIndices[1]);
-			outputIndices.push_back(inputIndices[2]);
-			outindicesIDs.push_back(0);
-			outindicesIDs.push_back(1);
-			outindicesIDs.push_back(2);
-			outputIndices.push_back(inputIndices[0]);
-			outputIndices.push_back(inputIndices[2]);
-			outputIndices.push_back(inputIndices[3]);
-			outindicesIDs.push_back(0);
-			outindicesIDs.push_back(2);
-			outindicesIDs.push_back(3);
-		}
+		// else if (inputIndices.size() == 4) {
+		// 	// Simple case for quads.
+		// 	outputIndices.push_back(inputIndices[0]);
+		// 	outputIndices.push_back(inputIndices[1]);
+		// 	outputIndices.push_back(inputIndices[2]);
+		// 	outindicesIDs.push_back(0);
+		// 	outindicesIDs.push_back(1);
+		// 	outindicesIDs.push_back(2);
+		// 	outputIndices.push_back(inputIndices[0]);
+		// 	outputIndices.push_back(inputIndices[2]);
+		// 	outputIndices.push_back(inputIndices[3]);
+		// 	outindicesIDs.push_back(0);
+		// 	outindicesIDs.push_back(2);
+		// 	outindicesIDs.push_back(3);
+		// }
 		else {
 			// Build 2D polygon projecting vertices onto normal plane.
 			// Faces are not necesarily planar, this is for example the case, when the face comes from filling a hole. In such cases
