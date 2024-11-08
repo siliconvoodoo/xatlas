@@ -6815,6 +6815,11 @@ struct PiecewiseParam
 							m_faceInPatch.set(f);
 							m_faceInAnyPatch.set(f);
 							if(m_faceInvalid.get(f)) m_faceInvalid.unset(f);
+							// Add all 3 vertices.
+							for (uint32_t i = 0; i < 3; i++) {
+								const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
+								if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+							}
 						}
 					}
 					else {break;}
@@ -6828,6 +6833,11 @@ struct PiecewiseParam
 								m_faceInPatch.set(f);
 								m_faceInAnyPatch.set(f);
 								if(m_faceInvalid.get(f)) m_faceInvalid.unset(f);
+								// // Add all 3 vertices.
+								for (uint32_t i = 0; i < 3; i++) {
+									const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
+									if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+								}
 							}
 						}
 						else {break;}
