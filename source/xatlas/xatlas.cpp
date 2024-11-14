@@ -3503,21 +3503,21 @@ struct Triangulator
 			outindicesIDs.push_back(1);
 			outindicesIDs.push_back(2);
 		}
-		else if (inputIndices.size() == 3) {
-			// Simple case for quads.
-			outputIndices.push_back(inputIndices[0]);
-			outputIndices.push_back(inputIndices[1]);
-			outputIndices.push_back(inputIndices[2]);
-			outindicesIDs.push_back(0);
-			outindicesIDs.push_back(1);
-			outindicesIDs.push_back(2);
-			outputIndices.push_back(inputIndices[0]);
-			outputIndices.push_back(inputIndices[2]);
-			outputIndices.push_back(inputIndices[3]);
-			outindicesIDs.push_back(0);
-			outindicesIDs.push_back(2);
-			outindicesIDs.push_back(3);
-		}
+		// else if (inputIndices.size() == 4) {
+		// 	// Simple case for quads.
+		// 	outputIndices.push_back(inputIndices[0]);
+		// 	outputIndices.push_back(inputIndices[1]);
+		// 	outputIndices.push_back(inputIndices[2]);
+		// 	outindicesIDs.push_back(0);
+		// 	outindicesIDs.push_back(1);
+		// 	outindicesIDs.push_back(2);
+		// 	outputIndices.push_back(inputIndices[0]);
+		// 	outputIndices.push_back(inputIndices[2]);
+		// 	outputIndices.push_back(inputIndices[3]);
+		// 	outindicesIDs.push_back(0);
+		// 	outindicesIDs.push_back(2);
+		// 	outindicesIDs.push_back(3);
+		// }
 		else {
 			// Build 2D polygon projecting vertices onto normal plane.
 			// Faces are not necesarily planar, this is for example the case, when the face comes from filling a hole. In such cases
@@ -5271,14 +5271,14 @@ struct PlanarCharts
 						continue; // Already in a chart.
 					// if Triangle is a part of a Quad/NGon.
 					if (hasQuadsOrNGons) {
-						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface]) {
+						if (m_data.mesh->trianglesToPolygonIDs[face] == m_data.mesh->trianglesToPolygonIDs[oface]
+							&& face != oface) {
 							const uint32_t next = m_nextRegionFace[face];
 							m_nextRegionFace[face] = oface;
 							m_nextRegionFace[oface] = next;
 							m_faceToRegionId[oface] = regionCount;
 							faceStack.push_back(oface);
 							parsedFaces[oface] = true; // set parsed
-							parsedFaces[face] = true;  // set parsed
 							continue;
 						}
 					}
@@ -6829,19 +6829,25 @@ struct PiecewiseParam
 				XA_PROFILE_END(parameterizeChartsPiecewiseBoundaryIntersection)
 			}
 		}
+		// Still it makes artifacts for Quads/NGons. We need a different approach.
 		if (hasQuadsOrNGons) {
 			// Add other triangles of already added Quads/NGons
 			for (uint32_t f1 = 0; f1 < m_patch.size(); f1++) {
-				// uint32_t polygonID = m_mesh->trianglesToPolygonIDs[f]; // ID of a Quad/NGon
 				const uint32_t i_face = m_patch[f1];
 				const uint32_t faceQuadOrNGonID = m_mesh->trianglesToPolygonIDs[i_face];
 				const uint32_t nextFace = i_face + 1;
 				for (uint32_t f = nextFace; f < faceCount; f++) {
 					if (m_mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
 						if (!m_faceInAnyPatch.get(f)) {
-								m_patch.push_back(f);
-								m_faceInPatch.set(f);
-								m_faceInAnyPatch.set(f);
+							m_patch.push_back(f);
+							m_faceInPatch.set(f);
+							m_faceInAnyPatch.set(f);
+							if(m_faceInvalid.get(f)) m_faceInvalid.unset(f);
+							// Add all 3 vertices.
+							for (uint32_t i = 0; i < 3; i++) {
+								const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
+								if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+							}
 						}
 					}
 					else {break;}
@@ -6854,6 +6860,12 @@ struct PiecewiseParam
 								m_patch.push_back(f);
 								m_faceInPatch.set(f);
 								m_faceInAnyPatch.set(f);
+								if(m_faceInvalid.get(f)) m_faceInvalid.unset(f);
+								// // Add all 3 vertices.
+								for (uint32_t i = 0; i < 3; i++) {
+									const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
+									if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+								}
 							}
 						}
 						else {break;}
@@ -6861,7 +6873,6 @@ struct PiecewiseParam
 					}
 				}
 			}
-			
 		}
 		return true;
 	}
@@ -6927,11 +6938,11 @@ private:
 			}
 			XA_DEBUG_ASSERT(freeVertex != UINT32_MAX);
 			if (m_vertexInPatch.get(freeVertex)) {
-// #if 0
+#if 0
 				// If the free vertex is already in the patch, the face is enclosed by the patch. Add the face to the patch - don't need to assign texcoords.
 				freeVertex = UINT32_MAX;
 				addFaceToPatch(oface);
-// #endif
+#endif
 				continue;
 			}
 			// Check this here rather than above so faces enclosed by the patch are always added.
@@ -7438,6 +7449,7 @@ public:
 	void parameterize(const ChartOptions &options, UniformGrid2 &boundaryGrid)
 	{
 		const uint32_t unifiedVertexCount = m_unifiedMesh->vertexCount();
+		const bool hasQuadsOrNGons = m_unifiedMesh->trianglesToPolygonIDs.size() > 0 ? true : false;
 		if (m_generatorType == segment::ChartGeneratorType::OriginalUv) {
 		} else {
 			// Project vertices to plane.
@@ -7472,8 +7484,14 @@ public:
 				m_quality.computeFlippedFaces(m_unifiedMesh, nullptr);
 #endif
 				// Don't need to call computeMetrics here, that's only used in evaluateOrthoQuality to determine if quality is acceptable enough to use ortho projection.
-				if (m_quality.boundaryIntersection || m_quality.flippedTriangleCount > 0 || m_quality.zeroAreaTriangleCount > 0)
-					m_isInvalid = true;
+				if (m_quality.boundaryIntersection || m_quality.flippedTriangleCount > 0 || m_quality.zeroAreaTriangleCount > 0) {
+					if (hasQuadsOrNGons) {  // PiecewiseParam::computeChart() doesn't support Quads/NGons well
+						if (!m_quality.boundaryIntersection && m_quality.zeroAreaTriangleCount == 0)  // No support for these variants yet.
+							m_isInvalid = true;
+					}
+					else
+						m_isInvalid = true;
+				}
 				XA_PROFILE_END(parameterizeChartsEvaluateQuality)
 			}
 		}
