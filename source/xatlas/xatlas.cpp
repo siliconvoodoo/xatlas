@@ -2248,10 +2248,10 @@ public:
 	// If vertices are empty, the boundary vertices are used.
 	void compute(ConstArrayView<Vector2> vertices = ConstArrayView<Vector2>())
 	{
-		XA_DEBUG_ASSERT(!m_boundaryVertices.isEmpty());
+		XA_DEBUG_ASSERT(!m_boundaryVertices.isEmpty()); // V.Oddou note: keep the assert but just make it so that it doesn't crash later
 		if (vertices.length == 0)
 			vertices = m_boundaryVertices;
-		convexHull(m_boundaryVertices, m_hull, 0.00001f);
+		convexHull(m_boundaryVertices.isEmpty() ? vertices : m_boundaryVertices, m_hull, 0.00001f);
 		// @@ Ideally I should use rotating calipers to find the best box. Using brute force for now.
 		float best_area = FLT_MAX;
 		Vector2 best_min(0);
