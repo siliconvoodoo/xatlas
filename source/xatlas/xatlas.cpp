@@ -8671,14 +8671,16 @@ struct Atlas
 			}
 			XA_PROFILE_END(packChartsRasterize)
 			// Update brute force bucketing.
-			if (options.bruteForce) {
-				if (chartOrderArray[c] > minChartPerimeter && chartOrderArray[c] <= maxChartPerimeter - (chartPerimeterBucketSize * (currentChartBucket + 1))) {
-					// Moved to a smaller bucket, reset start location.
-					for (uint32_t j = 0; j < chartStartPositions.size(); j++)
-						chartStartPositions[j] = Vector2i(0, 0);
-					currentChartBucket++;
-				}
-			}
+			auto updateBucketing = [&](bool force) {
+				if (options.bruteForce || force) {
+					if (chartOrderArray[c] > minChartPerimeter && chartOrderArray[c] <= maxChartPerimeter - (chartPerimeterBucketSize * (currentChartBucket + 1))) {
+						// Moved to a smaller bucket, reset start location.
+						for (uint32_t j = 0; j < chartStartPositions.size(); j++)
+							chartStartPositions[j] = Vector2i(0, 0);
+						currentChartBucket++;
+					}
+				}};
+			updateBucketing(false);
 			// Find a location to place the chart in the atlas.
 			BitImage *chartImageToPack, *chartImageToPackRotated;
 			if (options.padding > 0) {
@@ -8695,6 +8697,7 @@ struct Atlas
 			int best_x = 0, best_y = 0;
 			int best_cw = 0, best_ch = 0;
 			int best_r = 0;
+			bool resetLoc = false;
 			for (;;)
 			{
 #if XA_DEBUG
@@ -8714,11 +8717,18 @@ struct Atlas
 					chartStartPositions.push_back(Vector2i(0, 0));
 				}
 				XA_PROFILE_START(packChartsFindLocation)
-				const bool foundLocation = findChartLocation(options, chartStartPositions[currentAtlas], m_bitImages[currentAtlas], chartImageToPack, chartImageToPackRotated, atlasSizes[currentAtlas].x, atlasSizes[currentAtlas].y, &best_x, &best_y, &best_cw, &best_ch, &best_r, maxResolution);
+				bool foundLocation = findChartLocation(options, chartStartPositions[currentAtlas], m_bitImages[currentAtlas], chartImageToPack, chartImageToPackRotated, atlasSizes[currentAtlas].x, atlasSizes[currentAtlas].y, &best_x, &best_y, &best_cw, &best_ch, &best_r, maxResolution);
 				XA_PROFILE_END(packChartsFindLocation)
 				XA_DEBUG_ASSERT(!(firstChartInBitImage && !foundLocation)); // Chart doesn't fit in an empty, newly allocated bitImage. Shouldn't happen, since charts are resized if they are too big to fit in the atlas.
 				if (maxResolution == 0) {
-					XA_DEBUG_ASSERT(foundLocation); // The atlas isn't limited to a fixed resolution, a chart location should be found on the first attempt.
+					// The atlas isn't limited to a fixed resolution, a chart location should be found on the first attempt.
+					// v.oddou: but it does happen in practice. possibly because of retry (4096) exhaustion.
+					// add a last chance attempt using brute force:
+					if (!resetLoc)
+						updateBucketing(true);
+					foundLocation = findChartLocation_bruteForce(options, chartStartPositions[currentAtlas], m_bitImages[currentAtlas], chartImageToPack, chartImageToPackRotated, atlasSizes[currentAtlas].x, atlasSizes[currentAtlas].y, &best_x, &best_y, &best_cw, &best_ch, &best_r, maxResolution);
+					resetLoc = true;
+					XA_DEBUG_ASSERT(foundLocation);
 					break;
 				}
 				if (foundLocation)
@@ -8727,7 +8737,7 @@ struct Atlas
 				currentAtlas++;
 			}
 			// Update brute force start location.
-			if (options.bruteForce) {
+			if (options.bruteForce || resetLoc) {
 				// Reset start location if the chart expanded the atlas.
 				if (best_x + best_cw > atlasSizes[currentAtlas].x || best_y + best_ch > atlasSizes[currentAtlas].y) {
 					for (uint32_t j = 0; j < chartStartPositions.size(); j++)
