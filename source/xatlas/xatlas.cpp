@@ -8721,14 +8721,16 @@ struct Atlas
 				XA_PROFILE_END(packChartsFindLocation)
 				XA_DEBUG_ASSERT(!(firstChartInBitImage && !foundLocation)); // Chart doesn't fit in an empty, newly allocated bitImage. Shouldn't happen, since charts are resized if they are too big to fit in the atlas.
 				if (maxResolution == 0) {
-					// The atlas isn't limited to a fixed resolution, a chart location should be found on the first attempt.
-					// v.oddou: but it does happen in practice. possibly because of retry (4096) exhaustion.
-					// add a last chance attempt using brute force:
-					if (!resetLoc)
-						updateBucketing(true);
-					foundLocation = findChartLocation_bruteForce(options, chartStartPositions[currentAtlas], m_bitImages[currentAtlas], chartImageToPack, chartImageToPackRotated, atlasSizes[currentAtlas].x, atlasSizes[currentAtlas].y, &best_x, &best_y, &best_cw, &best_ch, &best_r, maxResolution);
-					resetLoc = true;
-					XA_DEBUG_ASSERT(foundLocation);
+					if (!foundLocation) {
+						// The atlas isn't limited to a fixed resolution, a chart location should be found on the first attempt.
+						// v.oddou: but it does happen in practice. possibly because of retry (4096) exhaustion.
+						// add a last chance attempt using brute force:
+						if (!resetLoc)
+							updateBucketing(true);
+						foundLocation = findChartLocation_bruteForce(options, chartStartPositions[currentAtlas], m_bitImages[currentAtlas], chartImageToPack, chartImageToPackRotated, atlasSizes[currentAtlas].x, atlasSizes[currentAtlas].y, &best_x, &best_y, &best_cw, &best_ch, &best_r, maxResolution);
+						resetLoc = true;
+						XA_DEBUG_ASSERT(foundLocation);
+					}
 					break;
 				}
 				if (foundLocation)
