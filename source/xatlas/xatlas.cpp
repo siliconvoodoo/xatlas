@@ -44,6 +44,7 @@ Copyright (c) 2012 Brandon Pelfrey
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <random>
 #include <assert.h>
 #include <float.h> // FLT_MAX
 #include <limits.h>
@@ -2052,27 +2053,16 @@ public:
 
 	void reset()
 	{
-		x = 123456789;
-		y = 362436000;
-		z = 521288629;
-		c = 7654321;
+		engine = decltype(engine){888};
 	}
 
 	uint32_t getRange(uint32_t range)
 	{
-		if (range == 0)
-			return 0;
-		x = 69069 * x + 12345;
-		y ^= (y << 13);
-		y ^= (y >> 17);
-		y ^= (y << 5);
-		uint64_t t = 698769069ULL * z + c;
-		c = (t >> 32);
-		return (x + y + (z = (uint32_t)t)) % (range + 1);
+		return std::uniform_int_distribution<uint32_t>{0, range}(engine);
 	}
 
 private:
-	uint32_t x, y, z, c;
+	std::mt19937 engine{std::random_device{}()};
 };
 
 // Based on Pierre Terdiman's and Michael Herf's source code.
