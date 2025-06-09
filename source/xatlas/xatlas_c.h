@@ -224,7 +224,7 @@ typedef void *(*xatlasReallocFunc)(void *, size_t);
 typedef void (*xatlasFreeFunc)(void *);
 typedef int (*xatlasPrintFunc)(const char *, ...);
 
-XATLAS_API xatlasAtlas *xatlasCreate();
+XATLAS_API xatlasAtlas *xatlasCreate(bool multithread);
 XATLAS_API void xatlasDestroy(xatlasAtlas *atlas);
 XATLAS_API xatlasAddMeshError xatlasAddMesh(xatlasAtlas *atlas, const xatlasMeshDecl *meshDecl, uint32_t meshCountHint);
 XATLAS_API void xatlasAddMeshJoin(xatlasAtlas *atlas);

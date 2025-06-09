@@ -33,6 +33,7 @@ https://github.com/brandonpelfrey/Fast-BVH
 MIT License
 Copyright (c) 2012 Brandon Pelfrey
 */
+
 #include "xatlas.h"
 #ifndef XATLAS_C_API
 #define XATLAS_C_API 0
@@ -537,6 +538,7 @@ static uint32_t nextPowerOfTwo(uint32_t x)
 {
 	XA_DEBUG_ASSERT( x != 0 );
 	// On modern CPUs this is supposed to be as fast as using the bsr instruction.
+	//  note* v.oddou: I tested. it is 80% as fast as bsr in release and much faster than bsr in debug.
 	x--;
 	x |= x >> 1;
 	x |= x >> 2;
@@ -3141,11 +3143,27 @@ struct Task
 	void *userData; // Passed to func as taskUserData.
 };
 
-#if XA_MULTITHREADED
 class TaskScheduler
 {
 public:
-	TaskScheduler() : m_shutdown(false)
+	virtual uint32_t threadCount() const = 0;
+	virtual TaskGroupHandle createTaskGroup(void* userData = nullptr, uint32_t reserveSize = 0) = 0;
+	virtual void run(TaskGroupHandle handle, const Task& task) = 0;
+	virtual void wait(TaskGroupHandle* handle) = 0;
+
+	static uint32_t currentThreadIndex() { return m_threadIndex; }
+
+protected:
+	static thread_local uint32_t m_threadIndex;
+};
+
+thread_local uint32_t TaskScheduler::m_threadIndex = 0;
+
+#if XA_MULTITHREADED
+class TaskSchedulerMT : public TaskScheduler
+{
+public:
+	TaskSchedulerMT() : m_shutdown(false)
 	{
 		m_threadIndex = 0;
 		// Max with current task scheduler usage is 1 per thread + 1 deep nesting, but allow for some slop.
@@ -3165,7 +3183,7 @@ public:
 		}
 	}
 
-	~TaskScheduler()
+	virtual ~TaskSchedulerMT()
 	{
 		m_shutdown = true;
 		for (uint32_t i = 0; i < m_workers.size(); i++) {
@@ -3187,13 +3205,13 @@ public:
 		XA_FREE(m_groups);
 	}
 
-	uint32_t threadCount() const
+	uint32_t threadCount() const override
 	{
 		return max(1u, std::thread::hardware_concurrency()); // Including the main thread.
 	}
 
 	// userData is passed to Task::func as groupUserData.
-	TaskGroupHandle createTaskGroup(void *userData = nullptr, uint32_t reserveSize = 0)
+	TaskGroupHandle createTaskGroup(void *userData = nullptr, uint32_t reserveSize = 0) override
 	{
 		// Claim the first free group.
 		for (uint32_t i = 0; i < m_maxGroups; i++) {
@@ -3218,7 +3236,7 @@ public:
 		return handle;
 	}
 
-	void run(TaskGroupHandle handle, const Task &task)
+	void run(TaskGroupHandle handle, const Task &task) override
 	{
 		XA_DEBUG_ASSERT(handle.value != UINT32_MAX);
 		TaskGroup &group = m_groups[handle.value];
@@ -3233,7 +3251,7 @@ public:
 		}
 	}
 
-	void wait(TaskGroupHandle *handle)
+	void wait(TaskGroupHandle *handle) override
 	{
 		if (handle->value == UINT32_MAX) {
 			XA_DEBUG_ASSERT(false);
@@ -3259,8 +3277,6 @@ public:
 		handle->value = UINT32_MAX;
 	}
 
-	static uint32_t currentThreadIndex() { return m_threadIndex; }
-
 private:
 	struct TaskGroup
 	{
@@ -3270,6 +3286,7 @@ private:
 		Spinlock queueLock;
 		std::atomic<uint32_t> ref; // Increment when a task is enqueued, decrement when a task finishes.
 		void *userData;
+		uint64_t cacheLinePad_[2];  // avoid false sharing
 	};
 
 	struct Worker
@@ -3278,15 +3295,15 @@ private:
 		std::mutex mutex;
 		std::condition_variable cv;
 		std::atomic<bool> wakeup;
+		uint64_t cacheLinePad_[2];  // avoid false sharing
 	};
 
 	TaskGroup *m_groups;
 	Array<Worker> m_workers;
 	std::atomic<bool> m_shutdown;
 	uint32_t m_maxGroups;
-	static thread_local uint32_t m_threadIndex;
 
-	static void workerThread(TaskScheduler *scheduler, Worker *worker, uint32_t threadIndex)
+	static void workerThread(TaskSchedulerMT *scheduler, Worker *worker, uint32_t threadIndex)
 	{
 		m_threadIndex = threadIndex;
 		std::unique_lock<std::mutex> lock(worker->mutex);
@@ -3319,24 +3336,23 @@ private:
 		}
 	}
 };
+#endif
 
-thread_local uint32_t TaskScheduler::m_threadIndex;
-#else
-class TaskScheduler
+class TaskSchedulerST : public TaskScheduler
 {
 public:
-	~TaskScheduler()
+	virtual ~TaskSchedulerST()
 	{
 		for (uint32_t i = 0; i < m_groups.size(); i++)
 			destroyGroup({ i });
 	}
 
-	uint32_t threadCount() const
+	uint32_t threadCount() const override
 	{
 		return 1;
 	}
 
-	TaskGroupHandle createTaskGroup(void *userData = nullptr, uint32_t reserveSize = 0)
+	TaskGroupHandle createTaskGroup(void *userData = nullptr, uint32_t reserveSize = 0) override
 	{
 		TaskGroup *group = XA_NEW(MemTag::Default, TaskGroup);
 		group->queue.reserve(reserveSize);
@@ -3347,12 +3363,12 @@ public:
 		return handle;
 	}
 
-	void run(TaskGroupHandle handle, Task task)
+	void run(TaskGroupHandle handle, const Task& task) override
 	{
 		m_groups[handle.value]->queue.push_back(task);
 	}
 
-	void wait(TaskGroupHandle *handle)
+	void wait(TaskGroupHandle *handle) override
 	{
 		if (handle->value == UINT32_MAX) {
 			XA_DEBUG_ASSERT(false);
@@ -3365,8 +3381,6 @@ public:
 		destroyGroup(*handle);
 		handle->value = UINT32_MAX;
 	}
-
-	static uint32_t currentThreadIndex() { return 0; }
 
 private:
 	void destroyGroup(TaskGroupHandle handle)
@@ -3387,7 +3401,7 @@ private:
 
 	Array<TaskGroup *> m_groups;
 };
-#endif
+
 
 #if XA_DEBUG_EXPORT_TGA
 const uint8_t TGA_TYPE_RGB = 2;
@@ -3442,37 +3456,38 @@ template<typename T>
 class ThreadLocal
 {
 public:
-	ThreadLocal()
+	ThreadLocal(bool
+#if XA_MULTITHREADED
+	            mt
+#endif
+	)
 	{
 #if XA_MULTITHREADED
-		const uint32_t n = std::thread::hardware_concurrency();
+		m_n = mt ? std::thread::hardware_concurrency() : 1;
 #else
-		const uint32_t n = 1;
+		m_n = 1;
 #endif
-		m_array = XA_ALLOC_ARRAY(MemTag::Default, T, n);
-		for (uint32_t i = 0; i < n; i++)
+		m_array = XA_ALLOC_ARRAY(MemTag::Default, T, m_n);
+		for (uint32_t i = 0; i < m_n; i++)
 			new (&m_array[i]) T;
 	}
 
 	~ThreadLocal()
 	{
-#if XA_MULTITHREADED
-		const uint32_t n = std::thread::hardware_concurrency();
-#else
-		const uint32_t n = 1;
-#endif
-		for (uint32_t i = 0; i < n; i++)
+		for (uint32_t i = 0; i < m_n; i++)
 			m_array[i].~T();
 		XA_FREE(m_array);
 	}
 
 	T &get() const
 	{
+		XA_ASSERT(TaskScheduler::currentThreadIndex() < m_n);
 		return m_array[TaskScheduler::currentThreadIndex()];
 	}
 
 private:
 	T *m_array;
+	uint32_t m_n;
 };
 
 // Implemented as a struct so the temporary arrays can be reused.
@@ -8117,10 +8132,11 @@ public:
 		RadixSort meshSort;
 		meshSort.sort(meshSortData);
 		// Larger meshes are added first to reduce the chance of thread starvation.
-		ThreadLocal<segment::Atlas> atlas;
-		ThreadLocal<UniformGrid2> boundaryGrid; // For Quality boundary intersection.
-		ThreadLocal<ChartCtorBuffers> chartBuffers;
-		ThreadLocal<PiecewiseParam> piecewiseParam;
+		bool mt = taskScheduler->threadCount() > 1;
+		ThreadLocal<segment::Atlas> atlas(mt);
+		ThreadLocal<UniformGrid2> boundaryGrid(mt); // For Quality boundary intersection.
+		ThreadLocal<ChartCtorBuffers> chartBuffers(mt);
+		ThreadLocal<PiecewiseParam> piecewiseParam(mt);
 		MeshComputeChartsTaskGroupArgs taskGroupArgs;
 		taskGroupArgs.atlas = &atlas;
 		taskGroupArgs.options = &options;
@@ -8358,7 +8374,7 @@ struct Atlas
 		if (chartCount == 0)
 			return;
 		// Run one task per chart.
-		ThreadLocal<BoundingBox2D> boundingBox;
+		ThreadLocal<BoundingBox2D> boundingBox(taskScheduler->threadCount() > 1);
 		TaskGroupHandle taskGroup = taskScheduler->createTaskGroup(&boundingBox, chartCount);
 		Array<AddChartTaskArgs> taskArgs;
 		taskArgs.resize(chartCount);
@@ -9085,11 +9101,20 @@ struct Context
 	bool uvMeshChartsComputed = false;
 };
 
-Atlas *Create()
+Atlas *Create(bool
+#if XA_MULTITHREADED
+			  multiThread
+#endif
+)
 {
 	Context *ctx = XA_NEW(internal::MemTag::Default, Context);
 	memset(&ctx->atlas, 0, sizeof(Atlas));
-	ctx->taskScheduler = XA_NEW(internal::MemTag::Default, internal::TaskScheduler);
+#if XA_MULTITHREADED
+	if (multiThread)
+		ctx->taskScheduler = XA_NEW(internal::MemTag::Default, internal::TaskSchedulerMT);
+	else
+#endif
+		ctx->taskScheduler = XA_NEW(internal::MemTag::Default, internal::TaskSchedulerST);
 	return &ctx->atlas;
 }
 
@@ -10167,9 +10192,9 @@ static_assert(sizeof(xatlas::PackOptions) == sizeof(xatlasPackOptions), "xatlasP
 extern "C" {
 #endif
 
-xatlasAtlas *xatlasCreate()
+xatlasAtlas *xatlasCreate(bool multithread)
 {
-	return (xatlasAtlas *)xatlas::Create();
+	return (xatlasAtlas *)xatlas::Create(multithread);
 }
 
 void xatlasDestroy(xatlasAtlas *atlas)

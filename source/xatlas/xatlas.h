@@ -122,7 +122,7 @@ struct Atlas
 };
 
 // Create an empty atlas.
-XATLAS_API Atlas *Create();
+XATLAS_API Atlas *Create(bool multiThread);
 
 XATLAS_API void Destroy(Atlas *atlas);
 

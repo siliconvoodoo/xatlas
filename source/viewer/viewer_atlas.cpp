@@ -413,7 +413,7 @@ static void atlasGenerateThread()
 			xatlas::Destroy(s_atlas.data);
 			s_atlas.data = nullptr;
 		}
-		s_atlas.data = xatlas::Create();
+		s_atlas.data = xatlas::Create(true);
 		xatlas::SetProgressCallback(s_atlas.data, atlasProgressCallback);
 		std::vector<uint8_t> ignoreFaces; // Should be bool, workaround stupid C++ specialization.
 		std::vector<uint32_t> faceMaterials;
