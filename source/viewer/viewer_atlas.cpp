@@ -1037,13 +1037,13 @@ void atlasShowGuiOptions()
 		ImGui::Text("%g texels per unit", s_atlas.data->texelsPerUnit);
 		if (s_atlas.data->atlasCount == 1) {
 			ImGui::NextColumn();
-			ImGui::Text("%g%% utilization", s_atlas.data->utilization[0] * 100.0f);
+			ImGui::Text("%g%% utilization (N/A)", 0);// s_atlas.data->utilization[0] * 100.0f);
 			ImGui::Columns(1);
 		}
 		else {
 			ImGui::Columns(1);
 			for (uint32_t i = 0; i < s_atlas.data->atlasCount; i++)
-				ImGui::Text("%u: %g%% utilization", i, s_atlas.data->utilization[i]);
+				ImGui::Text("%u: %g%% utilization (N/A)", i, 0);// s_atlas.data->utilization[i]);
 		}
 	}
 }

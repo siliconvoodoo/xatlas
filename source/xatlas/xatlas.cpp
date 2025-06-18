@@ -8358,7 +8358,7 @@ struct Atlas
 	const Chart *getChart(uint32_t index) const { return m_charts[index]; }
 	uint32_t getChartCount() const { return m_charts.size(); }
 	const Array<AtlasImage *> &getImages() const { return m_atlasImages; }
-	float getUtilization(uint32_t atlas) const { return m_utilization[atlas]; }
+	//float getUtilization(uint32_t atlas) const { return m_utilization[atlas]; }
 
 	void addCharts(TaskScheduler *taskScheduler, param::Atlas *paramAtlas)
 	{
@@ -8825,7 +8825,7 @@ struct Atlas
 			m_width = m_height = maxResolution - (int)options.padding * 2;
 		}
 		XA_PRINT("   %dx%d resolution\n", m_width, m_height);
-		m_utilization.resize(m_bitImages.size());
+		/*m_utilization.resize(m_bitImages.size());  // v.oddou: saving time
 		for (uint32_t i = 0; i < m_utilization.size(); i++) {
 			if (m_width == 0 || m_height == 0)
 				m_utilization[i] = 0.0f;
@@ -8843,7 +8843,7 @@ struct Atlas
 			else {
 				XA_PRINT("   %f%% utilization\n", m_utilization[i] * 100.0f);
 			}
-		}
+		}*/
 #if XA_DEBUG_EXPORT_ATLAS_IMAGES
 		for (uint32_t i = 0; i < m_atlasImages.size(); i++) {
 			char filename[256];
@@ -9064,7 +9064,7 @@ private:
 	}
 
 	Array<AtlasImage *> m_atlasImages;
-	Array<float> m_utilization;
+	//Array<float> m_utilization;
 	Array<BitImage *> m_bitImages;
 	Array<Chart *> m_charts;
 	RadixSort m_radix;
@@ -9146,8 +9146,10 @@ void Destroy(Atlas *atlas)
 {
 	XA_DEBUG_ASSERT(atlas);
 	Context *ctx = (Context *)atlas;
-	if (atlas->utilization)
-		XA_FREE(atlas->utilization);
+	//if (atlas->utilization)
+	//	XA_FREE(atlas->utilization);
+	if (atlas->parametricArea)
+		XA_FREE(atlas->parametricArea);
 	if (atlas->image)
 		XA_FREE(atlas->image);
 	DestroyOutputMeshes(ctx);
@@ -9608,8 +9610,10 @@ void ComputeCharts(Atlas *atlas, ChartOptions options)
 		return;
 	}
 	// Reset atlas state. This function may be called multiple times, or again after PackCharts.
-	if (atlas->utilization)
-		XA_FREE(atlas->utilization);
+	//if (atlas->utilization)
+	//	XA_FREE(atlas->utilization);
+	if (atlas->parametricArea)
+		XA_FREE(atlas->parametricArea);
 	if (atlas->image)
 		XA_FREE(atlas->image);
 	DestroyOutputMeshes(ctx);
@@ -9811,9 +9815,13 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 	}
 	// Cleanup atlas.
 	DestroyOutputMeshes(ctx);
-	if (atlas->utilization) {
-		XA_FREE(atlas->utilization);
-		atlas->utilization = nullptr;
+	//if (atlas->utilization) {
+	//	XA_FREE(atlas->utilization);
+	//	atlas->utilization = nullptr;
+	//}
+	if (atlas->parametricArea) {
+		XA_FREE(atlas->parametricArea);
+		atlas->parametricArea = nullptr;
 	}
 	if (atlas->image) {
 		XA_FREE(atlas->image);
@@ -9840,10 +9848,15 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 	atlas->width = packAtlas.getWidth();
 	atlas->height = packAtlas.getHeight();
 	atlas->texelsPerUnit = packAtlas.getTexelsPerUnit();
-	if (atlas->atlasCount > 0) {
+	/*if (atlas->atlasCount > 0) {
 		atlas->utilization = XA_ALLOC_ARRAY(internal::MemTag::Default, float, atlas->atlasCount);
 		for (uint32_t i = 0; i < atlas->atlasCount; i++)
 			atlas->utilization[i] = packAtlas.getUtilization(i);
+	}*/
+	if (atlas->chartCount > 0) {
+		atlas->parametricArea = XA_ALLOC_ARRAY(internal::MemTag::Default, float, atlas->chartCount);
+		for (uint32_t i = 0; i < atlas->chartCount; i++)
+			atlas->parametricArea[i] = packAtlas.getChart(i)->parametricArea;
 	}
 	if (packOptions.createImage) {
 		atlas->image = XA_ALLOC_ARRAY(internal::MemTag::Default, uint32_t, atlas->atlasCount * atlas->width * atlas->height);

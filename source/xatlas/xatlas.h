@@ -112,7 +112,8 @@ struct Atlas
 {
 	uint32_t *image;
 	Mesh *meshes; // The output meshes, corresponding to each AddMesh call.
-	float *utilization; // Normalized atlas texel utilization array. E.g. a value of 0.8 means 20% empty space. atlasCount in length.
+	//float *utilization; // Normalized atlas texel utilization array. E.g. a value of 0.8 means 20% empty space. atlasCount in length.
+	float* parametricArea; // Array of floats (size charCount), holding each chart's parametric area
 	uint32_t width; // Atlas width in texels.
 	uint32_t height; // Atlas height in texels.
 	uint32_t atlasCount; // Number of sub-atlases. Equal to 0 unless PackOptions resolution is changed from default (0).
