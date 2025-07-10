@@ -6554,7 +6554,7 @@ static bool setup_abf_relations(opennl::NLContext *context, int id0, int id1, in
 	// @@ Need to revisit this more carefully!
 	float a0, a1, a2;
 	triangle_angles(p0, p1, p2, &a0, &a1, &a2);
-	if (a0 == 0.0f || a1 == 0.0f || a2 == 0.0f)
+	if (a0 <= 0.0f || a1 <= 0.0f || a2 <= 0.0f)
 		return false;
 	float s0 = sinf(a0);
 	float s1 = sinf(a1);
