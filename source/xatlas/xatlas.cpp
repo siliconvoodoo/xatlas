@@ -513,6 +513,11 @@ static bool equal(const float f0, const float f1, const float epsilon)
 	return fabs(f0 - f1) <= epsilon * max3(1.0f, fabsf(f0), fabsf(f1));
 }
 
+static bool equal(const double f0, const double f1, const double epsilon)
+{
+	return abs(f0 - f1) <= epsilon * max3(1.0, fabs(f0), fabs(f1));
+}
+
 static int ftoi_ceil(float val)
 {
 	return (int)ceilf(val);
@@ -524,6 +529,11 @@ static bool isZero(const float f, const float epsilon)
 }
 
 static float square(float f)
+{
+	return f * f;
+}
+
+static double square(double f)
 {
 	return f * f;
 }
@@ -803,9 +813,122 @@ static Vector3 operator/(const Vector3 &v, float s)
 	return v * (1.0f / s);
 }
 
+// vector double
+class Vector3d
+{
+public:
+	Vector3d() {}
+	Vector3d(Vector3 vf) : x(vf.x), y(vf.y), z(vf.z) {}
+	explicit Vector3d(double f) : x(f), y(f), z(f) {}
+	Vector3d(double _x, double _y, double _z) : x(_x), y(_y), z(_z) {}
+	Vector3d(const Vector2 &v, double _z) : x(v.x), y(v.y), z(_z) {}
+
+	Vector2 xy() const
+	{
+		return Vector2(x, y);
+	}
+
+	Vector3d operator-() const
+	{
+		return Vector3d(-x, -y, -z);
+	}
+
+	void operator=(const Vector3 &v)
+	{
+		x = v.x;
+		y = v.y;
+		z = v.z;
+	}
+
+	void operator+=(const Vector3d &v)
+	{
+		x += v.x;
+		y += v.y;
+		z += v.z;
+	}
+
+	void operator-=(const Vector3d &v)
+	{
+		x -= v.x;
+		y -= v.y;
+		z -= v.z;
+	}
+
+	void operator*=(double s)
+	{
+		x *= s;
+		y *= s;
+		z *= s;
+	}
+
+	void operator/=(double s)
+	{
+		double is = 1.0f / s;
+		x *= is;
+		y *= is;
+		z *= is;
+	}
+
+	void operator*=(const Vector3d &v)
+	{
+		x *= v.x;
+		y *= v.y;
+		z *= v.z;
+	}
+
+	void operator/=(const Vector3d &v)
+	{
+		x /= v.x;
+		y /= v.y;
+		z /= v.z;
+	}
+
+	double x, y, z;
+};
+
+static Vector3 d2f(const Vector3d &v)
+{
+	return Vector3((float)v.x, (float)v.y, (float)v.z);
+}
+
+static Vector3d operator+(const Vector3d &a, const Vector3d &b)
+{
+	return Vector3d(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+static Vector3d operator-(const Vector3d &a, const Vector3d &b)
+{
+	return Vector3d(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+static bool operator==(const Vector3d &a, const Vector3d &b)
+{
+	return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+static Vector3d cross(const Vector3d &a, const Vector3d &b)
+{
+	return Vector3d(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+static Vector3d operator*(const Vector3d &v, double s)
+{
+	return Vector3d(v.x * s, v.y * s, v.z * s);
+}
+
+static Vector3d operator/(const Vector3d &v, double s)
+{
+	return v * (1.0f / s);
+}
+
 static float dot(const Vector3 &a, const Vector3 &b)
 {
 	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static double dotd(const Vector3 &a, const Vector3 &b)
+{
+	return (double)a.x * (double)b.x + (double)a.y * (double)b.y + (double)a.z * (double)b.z;
 }
 
 static float lengthSquared(const Vector3 &v)
@@ -859,6 +982,70 @@ static Vector3 min(const Vector3 &a, const Vector3 &b)
 static Vector3 max(const Vector3 &a, const Vector3 &b)
 {
 	return Vector3(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z));
+}
+
+// same operations on vector3d
+static double dot(const Vector3d &a, const Vector3d &b)
+{
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static double dotd(const Vector3d &a, const Vector3d &b)
+{
+	return (double)a.x * (double)b.x + (double)a.y * (double)b.y + (double)a.z * (double)b.z;
+}
+
+static double lengthSquared(const Vector3d &v)
+{
+	return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+static double length(const Vector3d &v)
+{
+	return sqrt(lengthSquared(v));
+}
+
+static double angle(const Vector3d &a, const Vector3d &b)
+{
+	const Vector3d c = cross(a, b);
+	return abs(atan2(length(c), dot(a, b)));
+}
+
+static bool isNormalized(const Vector3d &v, double epsilon = kNormalEpsilon)
+{
+	return equal(length(v), 1.0, epsilon);
+}
+
+static Vector3d normalize(const Vector3d &v)
+{
+	const double l = length(v);
+	XA_DEBUG_ASSERT(l > 0.0f); // Never negative.
+	const Vector3d n = v * (1.0f / l);
+	XA_DEBUG_ASSERT(isNormalized(n));
+	return n;
+}
+
+static Vector3d normalizeSafe(const Vector3d &v, const Vector3d &fallback)
+{
+	const double l = length(v);
+	if (l > 0.0f) // Never negative.
+		return v * (1.0f / l);
+	return fallback;
+}
+
+static bool equal(const Vector3d &v0, const Vector3d &v1, double epsilon)
+{
+	return fabs(v0.x - v1.x) <= epsilon && fabs(v0.y - v1.y) <= epsilon && fabs(v0.z - v1.z) <= epsilon;
+}
+
+static Vector3d min(const Vector3d &a, const Vector3d &b)
+{
+	return Vector3d(min(a.x, b.x), min(a.y, b.y), min(a.z, b.z));
+}
+
+static Vector3d max(const Vector3d &a, const Vector3d &b)
+{
+	return Vector3d(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z));
 }
 
 #if XA_DEBUG
@@ -1935,6 +2122,12 @@ struct Hash
 	uint32_t operator()(const Key &k) const { return hash(k); }
 };
 
+template <>
+struct Hash<float>  // **voddou: float fuzzy hash
+{
+	uint32_t operator()(const float &k) const { return hash(round(k*1000)/1000.f); }
+};
+
 template <typename Key>
 struct PassthroughHash
 {
@@ -1945,6 +2138,12 @@ template <typename Key>
 struct Equal
 {
 	bool operator()(const Key &k0, const Key &k1) const { return k0 == k1; }
+};
+
+template <>
+struct Equal<float>  // **voddou: float fuzzy equal (for UV colocality tolerance in chart growing)
+{
+	bool operator()(const float &k0, const float &k1) const { return k0 - k1 < FLT_EPSILON; }
 };
 
 template<typename Key, typename H = Hash<Key>, typename E = Equal<Key> >
@@ -2679,25 +2878,25 @@ public:
 
 	Vector3 computeFaceCentroid(uint32_t face) const
 	{
-		Vector3 sum(0.0f);
+		Vector3d sum(0.0f);
 		for (uint32_t i = 0; i < 3; i++)
 			sum += m_positions[m_indices[face * 3 + i]];
-		return sum / 3.0f;
+		return d2f(sum / 3.0);
 	}
 
 	// Average of the edge midpoints weighted by the edge length.
 	// I want a point inside the triangle, but closer to the cirumcenter.
-	Vector3 computeFaceCenter(uint32_t face) const
+	Vector3d computeFaceCenter(uint32_t face) const
 	{
-		const Vector3 &p0 = m_positions[m_indices[face * 3 + 0]];
-		const Vector3 &p1 = m_positions[m_indices[face * 3 + 1]];
-		const Vector3 &p2 = m_positions[m_indices[face * 3 + 2]];
-		const float l0 = length(p1 - p0);
-		const float l1 = length(p2 - p1);
-		const float l2 = length(p0 - p2);
-		const Vector3 m0 = (p0 + p1) * l0 / (l0 + l1 + l2);
-		const Vector3 m1 = (p1 + p2) * l1 / (l0 + l1 + l2);
-		const Vector3 m2 = (p2 + p0) * l2 / (l0 + l1 + l2);
+		const Vector3d &p0 = m_positions[m_indices[face * 3 + 0]];
+		const Vector3d &p1 = m_positions[m_indices[face * 3 + 1]];
+		const Vector3d &p2 = m_positions[m_indices[face * 3 + 2]];
+		const double l0 = length(p1 - p0);
+		const double l1 = length(p2 - p1);
+		const double l2 = length(p0 - p2);
+		const Vector3d m0 = (p0 + p1) * l0 / (l0 + l1 + l2);
+		const Vector3d m1 = (p1 + p2) * l1 / (l0 + l1 + l2);
+		const Vector3d m2 = (p2 + p0) * l2 / (l0 + l1 + l2);
 		return m0 + m1 + m2;
 	}
 
@@ -5002,7 +5201,7 @@ struct CostQueue
 {
 	CostQueue(uint32_t size = UINT32_MAX) : m_maxSize(size), m_pairs(MemTag::SegmentAtlasChartCandidates) {}
 
-	float peekCost() const
+	double peekCost() const
 	{
 		return m_pairs.back().cost;
 	}
@@ -5012,7 +5211,7 @@ struct CostQueue
 		return m_pairs.back().face;
 	}
 
-	void push(float cost, uint32_t face)
+	void push(double cost, uint32_t face)
 	{
 		const Pair p = { cost, face };
 		if (m_pairs.isEmpty() || cost < peekCost())
@@ -5053,7 +5252,7 @@ private:
 
 	struct Pair
 	{
-		float cost;
+		double cost;
 		uint32_t face;
 	};
 
@@ -5473,10 +5672,10 @@ private:
 
 		int id = -1;
 		Basis basis; // Best fit normal.
-		float area = 0.0f;
-		float boundaryLength = 0.0f;
-		Vector3 centroidSum = Vector3(0.0f); // Sum of chart face centroids.
-		Vector3 centroid = Vector3(0.0f); // Average centroid of chart faces.
+		double area = 0.0;
+		double boundaryLength = 0.0;
+		Vector3d centroidSum = Vector3d(0.0); // Sum of chart face centroids.
+		Vector3d centroid = Vector3d(0.0); // Average centroid of chart faces.
 		Array<uint32_t> faces;
 		Array<uint32_t> failedPlanarRegions;
 		CostQueue candidates;
@@ -5508,13 +5707,13 @@ private:
 				break;
 			// Get the single best candidate out of the chart best candidates.
 			uint32_t bestFace = UINT32_MAX, bestChart = UINT32_MAX;
-			float lowestCost = FLT_MAX;
+			double lowestCost = FLT_MAX;
 			for (uint32_t i = 0; i < m_charts.size(); i++) {
 				Chart *chart = m_charts[i];
 				// Get the best candidate from the chart.
 				// Cleanup any best candidates that have been claimed by another chart.
 				uint32_t face = UINT32_MAX;
-				float cost = FLT_MAX;
+				double cost = FLT_MAX;
 				for (;;) {
 					if (chart->candidates.count() == 0)
 						break;
@@ -5569,8 +5768,8 @@ private:
 			chart->basis.normal = Vector3(0.0f);
 			chart->basis.tangent = Vector3(0.0f);
 			chart->basis.bitangent = Vector3(0.0f);
-			chart->centroidSum = Vector3(0.0f);
-			chart->centroid = Vector3(0.0f);
+			chart->centroidSum = Vector3d(0.0);
+			chart->centroid = Vector3d(0.0);
 			chart->faces.clear();
 			chart->candidates.clear();
 			chart->failedPlanarRegions.clear();
@@ -5613,7 +5812,7 @@ private:
 				Chart *chart = m_charts[c];
 				if (chart == nullptr)
 					continue;
-				float externalBoundaryLength = 0.0f;
+				double externalBoundaryLength = 0.0f;
 				m_sharedBoundaryLengths.resize(chartCount);
 				m_sharedBoundaryLengths.zeroOutMemory();
 				m_sharedBoundaryLengthsNoSeams.resize(chartCount);
@@ -5624,7 +5823,7 @@ private:
 				for (uint32_t i = 0; i < faceCount; i++) {
 					const uint32_t f = chart->faces[i];
 					for (Mesh::FaceEdgeIterator it(m_data.mesh, f); !it.isDone(); it.advance()) {
-						const float l = m_data.edgeLengths[it.edge()];
+						const double l = m_data.edgeLengths[it.edge()];
 						if (it.isBoundary()) {
 							externalBoundaryLength += l;
 						} else {
@@ -5662,24 +5861,24 @@ private:
 						continue;
 					// Merge if chart2 has a single face.
 					// chart1 must have more than 1 face.
-					// chart2 area must be <= 10% of chart1 area.
-					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && chart->faces.size() > 1 && chart2->faces.size() == 1 && chart2->area <= chart->area * 0.1f)
+					// chart2 area must be <= 10% of chart1 area. **voddou: I removed that criterion
+					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && chart->faces.size() > 1 && chart2->faces.size() == 1)// && chart2->area <= chart->area * 0.1f)
 						goto merge;
 					// Merge if chart2 has two faces (probably a quad), and chart1 bounds at least 2 of its edges.
 					if (chart2->faces.size() == 2 && m_sharedBoundaryEdgeCountNoSeams[cc] >= 2)
 						goto merge;
 					// Merge if chart2 is wholely inside chart1, ignoring seams.
-					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && equal(m_sharedBoundaryLengthsNoSeams[cc], chart2->boundaryLength, kEpsilon))
+					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && equal((double)m_sharedBoundaryLengthsNoSeams[cc], chart2->boundaryLength, (double)kEpsilon))
 						goto merge;
-					if (m_sharedBoundaryLengths[cc] > 0.2f * max(0.0f, chart->boundaryLength - externalBoundaryLength) ||
-						m_sharedBoundaryLengths[cc] > 0.75f * chart2->boundaryLength)
+					if (m_sharedBoundaryLengths[cc] > 0.2f * max(0.0, chart->boundaryLength - externalBoundaryLength) ||
+						m_sharedBoundaryLengths[cc] > 0.35f * chart2->boundaryLength) //**voddo: original 0.75
 						goto merge;
 					continue;
 				merge:
 					if (!mergeChart(chart, chart2, m_sharedBoundaryLengthsNoSeams[cc]))
 						continue;
 					merged = true;
-					break;
+					//break; // **voddou: commented out
 				}
 				if (merged)
 					break;
@@ -5911,7 +6110,7 @@ private:
 			m_data.isFaceInChart.set(f);
 			chart->centroidSum += m_data.mesh->computeFaceCenter(f);
 		}
-		chart->centroid = chart->centroidSum / float(chart->faces.size());
+		chart->centroid = chart->centroidSum / double(chart->faces.size());
 		// Refresh candidates.
 		chart->candidates.clear();
 		for (uint32_t i = 0; i < faceCount; i++) {
@@ -5927,7 +6126,7 @@ private:
 					continue; // Face belongs to another chart.
 				if (chart->failedPlanarRegions.contains(m_planarCharts.regionIdFromFace(oface)))
 					continue; // Failed to add this faces planar region to the chart before.
-				const float cost = computeCost(chart, oface);
+				const double cost = computeCost(chart, oface);
 				if (cost < FLT_MAX)
 					chart->candidates.push(cost, oface);
 			}
@@ -5942,18 +6141,18 @@ private:
 		const uint32_t faceCount = chart->faces.size();
 		m_bestTriangles.clear();
 		for (uint32_t i = 0; i < faceCount; i++) {
-			const float cost = computeNormalDeviationMetric(chart, chart->faces[i]);
+			const double cost = computeNormalDeviationMetric(chart, chart->faces[i]);
 			m_bestTriangles.push(cost, chart->faces[i]);
 		}
 		// Of those, choose the most central triangle.
 		uint32_t mostCentral = 0;
-		float minDistance = FLT_MAX;
+		double minDistance = FLT_MAX;
 		for (;;) {
 			if (m_bestTriangles.count() == 0)
 				break;
 			const uint32_t face = m_bestTriangles.pop();
-			Vector3 faceCentroid = m_data.mesh->computeFaceCenter(face);
-			const float distance = length(chart->centroid - faceCentroid);
+			Vector3d faceCentroid = m_data.mesh->computeFaceCenter(face);
+			const double distance = length(chart->centroid - faceCentroid);
 			if (distance < minDistance) {
 				minDistance = distance;
 				mostCentral = face;
@@ -5967,33 +6166,33 @@ private:
 	}
 
 	// Cost is combined metrics * weights.
-	float computeCost(Chart *chart, uint32_t face) const
+	double computeCost(Chart *chart, uint32_t face) const
 	{
 		// Estimate boundary length and area:
-		const float newChartArea = computeArea(chart, face);
-		const float newBoundaryLength = computeBoundaryLength(chart, face);
+		const double newChartArea = computeArea(chart, face);
+		const double newBoundaryLength = computeBoundaryLength(chart, face);
 		// Enforce limits strictly:
 		if (m_data.options.maxChartArea > 0.0f && newChartArea > m_data.options.maxChartArea)
 			return FLT_MAX;
 		if (m_data.options.maxBoundaryLength > 0.0f && newBoundaryLength > m_data.options.maxBoundaryLength)
 			return FLT_MAX;
 		// Compute metrics.
-		float cost = 0.0f;
-		const float normalDeviation = computeNormalDeviationMetric(chart, face);
-		if (normalDeviation >= 0.707f) // ~75 degrees
+		double cost = 0.;
+		const double normalDeviation = computeNormalDeviationMetric(chart, face);
+		if (normalDeviation >= 0.707) // ~75 degrees
 			return FLT_MAX;
 		cost += m_data.options.normalDeviationWeight * normalDeviation;
 		// Penalize faces that cross seams, reward faces that close seams or reach boundaries.
 		// Make sure normal seams are fully respected:
-		const float normalSeam = computeNormalSeamMetric(chart, face);
+		const double normalSeam = computeNormalSeamMetric(chart, face);
 		if (m_data.options.normalSeamWeight >= 1000.0f && normalSeam > 0.0f)
 			return FLT_MAX;
 		cost += m_data.options.normalSeamWeight * normalSeam;
 		cost += m_data.options.roundnessWeight * computeRoundnessMetric(chart, newBoundaryLength, newChartArea);
 		cost += m_data.options.straightnessWeight * computeStraightnessMetric(chart, face);
 		cost += m_data.options.textureSeamWeight * computeTextureSeamMetric(chart, face);
-		//float R = evaluateCompletenessMetric(chart, face);
-		//float D = evaluateDihedralAngleMetric(chart, face);
+		//double R = evaluateCompletenessMetric(chart, face);
+		//double D = evaluateDihedralAngleMetric(chart, face);
 		// @@ Add a metric based on local dihedral angle.
 		// @@ Tweaking the normal and texture seam metrics.
 		// - Cause more impedance. Never cross 90 degree edges.
@@ -6004,30 +6203,30 @@ private:
 	// Returns a value in [0-1].
 	// 0 if face normal is coplanar to the chart's best fit normal.
 	// 1 if face normal is perpendicular.
-	float computeNormalDeviationMetric(Chart *chart, uint32_t face) const
+	double computeNormalDeviationMetric(Chart *chart, uint32_t face) const
 	{
 		// All faces in coplanar regions have the same normal, can use any face.
 		const Vector3 faceNormal = m_data.faceNormals[face];
 		// Use plane fitting metric for now:
-		return min(1.0f - dot(faceNormal, chart->basis.normal), 1.0f); // @@ normal deviations should be weighted by face area
+		return min(1.0 - dotd(faceNormal, chart->basis.normal), 1.0); // @@ normal deviations should be weighted by face area
 	}
 
-	float computeRoundnessMetric(Chart *chart, float newBoundaryLength, float newChartArea) const
+	double computeRoundnessMetric(Chart *chart, double newBoundaryLength, double newChartArea) const
 	{
-		const float oldRoundness = square(chart->boundaryLength) / chart->area;
-		const float newRoundness = square(newBoundaryLength) / newChartArea;
+		const double oldRoundness = square(chart->boundaryLength) / chart->area;
+		const double newRoundness = square(newBoundaryLength) / newChartArea;
 		return 1.0f - oldRoundness / newRoundness;
 	}
 
-	float computeStraightnessMetric(Chart *chart, uint32_t firstFace) const
+	double computeStraightnessMetric(Chart *chart, uint32_t firstFace) const
 	{
-		float l_out = 0.0f; // Length of firstFace planar region boundary that doesn't border the chart.
-		float l_in = 0.0f; // Length that does border the chart.
+		double l_out = 0.0f; // Length of firstFace planar region boundary that doesn't border the chart.
+		double l_in = 0.0f; // Length that does border the chart.
 		const uint32_t planarRegionId = m_planarCharts.regionIdFromFace(firstFace);
 		uint32_t face = firstFace;
 		for (;;) {
 			for (Mesh::FaceEdgeIterator it(m_data.mesh, face); !it.isDone(); it.advance()) {
-				const float l = m_data.edgeLengths[it.edge()];
+				const double l = m_data.edgeLengths[it.edge()];
 				if (it.isBoundary()) {
 					l_out += l;
 				} else if (m_planarCharts.regionIdFromFace(it.oppositeFace()) != planarRegionId) {
@@ -6042,8 +6241,8 @@ private:
 				break;
 		}
 #if 1
-		float ratio = (l_out - l_in) / (l_out + l_in);
-		return min(ratio, 0.0f); // Only use the straightness metric to close gaps.
+		double ratio = (l_out - l_in) / (l_out + l_in);
+		return min(ratio, 0.0); // Only use the straightness metric to close gaps.
 #else
 		return 1.0f - l_in / l_out;
 #endif
@@ -6138,9 +6337,9 @@ private:
 		return seamLength / totalLength;
 	}
 
-	float computeArea(Chart *chart, uint32_t firstFace) const
+	double computeArea(Chart *chart, uint32_t firstFace) const
 	{
-		float area = chart->area;
+		double area = chart->area;
 		uint32_t face = firstFace;
 		for (;;) {
 			area += m_data.faceAreas[face];
@@ -6151,15 +6350,15 @@ private:
 		return area;
 	}
 
-	float computeBoundaryLength(Chart *chart, uint32_t firstFace) const
+	double computeBoundaryLength(Chart *chart, uint32_t firstFace) const
 	{
-		float boundaryLength = chart->boundaryLength;
+		double boundaryLength = chart->boundaryLength;
 		// Add new edges, subtract edges shared with the chart.
 		const uint32_t planarRegionId = m_planarCharts.regionIdFromFace(firstFace);
 		uint32_t face = firstFace;
 		for (;;) {
 			for (Mesh::FaceEdgeIterator it(m_data.mesh, face); !it.isDone(); it.advance()) {
-				const float edgeLength = m_data.edgeLengths[it.edge()];
+				const double edgeLength = m_data.edgeLengths[it.edge()];
 				if (it.isBoundary()) {
 					boundaryLength += edgeLength;
 				} else if (m_planarCharts.regionIdFromFace(it.oppositeFace()) != planarRegionId) {
@@ -6173,7 +6372,7 @@ private:
 			if (face == firstFace)
 				break;
 		}
-		return max(0.0f, boundaryLength);  // @@ Hack!
+		return max(0.0, boundaryLength);  // @@ Hack!
 	}
 
 	bool mergeChart(Chart *owner, Chart *chart, float sharedBoundaryLength)
@@ -6228,8 +6427,8 @@ private:
 	UniformGrid2 m_boundaryGrid;
 #if XA_MERGE_CHARTS
 	// mergeCharts
-	Array<float> m_sharedBoundaryLengths;
-	Array<float> m_sharedBoundaryLengthsNoSeams;
+	Array<double> m_sharedBoundaryLengths;
+	Array<double> m_sharedBoundaryLengthsNoSeams;
 	Array<uint32_t> m_sharedBoundaryEdgeCountNoSeams;
 #endif
 	bool m_placingSeeds;
@@ -6527,23 +6726,23 @@ static void projectTriangle(Vector3 p0, Vector3 p1, Vector3 p2, Vector2 *z0, Vec
 
 // Conformal relations from Brecht Van Lommel (based on ABF):
 
-static float vec_angle_cos(const Vector3 &v1, const Vector3 &v2, const Vector3 &v3)
+static double vec_angle_cos(const Vector3 &v1, const Vector3 &v2, const Vector3 &v3)
 {
-	Vector3 d1 = v1 - v2;
-	Vector3 d2 = v3 - v2;
-	return clamp(dot(d1, d2) / (length(d1) * length(d2)), -1.0f, 1.0f);
+	Vector3d d1 = v1 - v2;
+	Vector3d d2 = v3 - v2;
+	return clamp(dot(d1, d2) / (length(d1) * length(d2)), -1.0, 1.0);
 }
 
-static float vec_angle(const Vector3 &v1, const Vector3 &v2, const Vector3 &v3)
+static double vec_angle(const Vector3 &v1, const Vector3 &v2, const Vector3 &v3)
 {
-	float dot = vec_angle_cos(v1, v2, v3);
-	return acosf(dot);
+	double dot = vec_angle_cos(v1, v2, v3);
+	return acos(dot);
 }
 
 static void triangle_angles(const Vector3 &v1, const Vector3 &v2, const Vector3 &v3, float *a1, float *a2, float *a3)
 {
-	*a1 = vec_angle(v3, v1, v2);
-	*a2 = vec_angle(v1, v2, v3);
+	*a1 = (float)vec_angle(v3, v1, v2);
+	*a2 = (float)vec_angle(v1, v2, v3);
 	*a3 = kPi - *a2 - *a1;
 }
 
@@ -6943,7 +7142,7 @@ private:
 			}
 			XA_DEBUG_ASSERT(freeVertex != UINT32_MAX);
 			if (m_vertexInPatch.get(freeVertex)) {
-#if 0
+#if 1
 				// If the free vertex is already in the patch, the face is enclosed by the patch. Add the face to the patch - don't need to assign texcoords.
 				freeVertex = UINT32_MAX;
 				addFaceToPatch(oface);
