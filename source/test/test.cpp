@@ -80,7 +80,7 @@ bool generateAtlas(const char *filename, bool useUvMesh, AtlasResult *result)
 		return false;
 	}
 	const clock_t start = clock();
-	xatlas::Atlas *atlas = xatlas::Create();
+	xatlas::Atlas *atlas = xatlas::Create(true);
 	int missingUvsCount = 0;
 	for (int i = 0; i < (int)shapes.size(); i++) {
 		const tinyobj::mesh_t &objMesh = shapes[i].mesh;

@@ -252,7 +252,7 @@ int main(int argc, char *argv[])
 	printf("   %d shapes\n", (int)shapes.size());
 	// Create empty atlas.
 	xatlas::SetPrint(Print, s_verbose);
-	xatlas::Atlas *atlas = xatlas::Create();
+	xatlas::Atlas *atlas = xatlas::Create(true);
 	// Set progress callback.
 	Stopwatch globalStopwatch, stopwatch;
 	xatlas::SetProgressCallback(atlas, ProgressCallback, &stopwatch);
@@ -301,8 +301,8 @@ int main(int argc, char *argv[])
 	xatlas::Generate(atlas);
 	printf("   %d charts\n", atlas->chartCount);
 	printf("   %d atlases\n", atlas->atlasCount);
-	for (uint32_t i = 0; i < atlas->atlasCount; i++)
-		printf("      %d: %0.2f%% utilization\n", i, atlas->utilization[i] * 100.0f);
+	//for (uint32_t i = 0; i < atlas->atlasCount; i++)
+	//	printf("      %d: %0.2f%% utilization\n", i, atlas->utilization[i] * 100.0f);
 	printf("   %ux%u resolution\n", atlas->width, atlas->height);
 	totalVertices = 0;
 	for (uint32_t i = 0; i < atlas->meshCount; i++) {

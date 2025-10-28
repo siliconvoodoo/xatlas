@@ -109,7 +109,7 @@ int main(int argc, char *argv[])
 		printf("%s\n", objz_getError());
 	// Create empty atlas.
 	xatlasSetPrint(Print, s_verbose);
-	xatlasAtlas *atlas = xatlasCreate();
+	xatlasAtlas *atlas = xatlasCreate(true);
 	// Set progress callback.
 	xatlasSetProgressCallback(atlas, ProgressCallback, NULL);
 	// Add mesh to atlas.
@@ -144,8 +144,8 @@ int main(int argc, char *argv[])
 	xatlasGenerate(atlas, NULL, NULL);
 	printf("   %d charts\n", atlas->chartCount);
 	printf("   %d atlases\n", atlas->atlasCount);
-	for (uint32_t i = 0; i < atlas->atlasCount; i++)
-		printf("      %d: %0.2f%% utilization\n", i, atlas->utilization[i] * 100.0f);
+	//for (uint32_t i = 0; i < atlas->atlasCount; i++)
+	//	printf("      %d: %0.2f%% utilization\n", i, atlas->utilization[i] * 100.0f);
 	printf("   %ux%u resolution\n", atlas->width, atlas->height);
 	printf("   %u total vertices\n", atlas->meshes[0].vertexCount);
 	// Cleanup.
