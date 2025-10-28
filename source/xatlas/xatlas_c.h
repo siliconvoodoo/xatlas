@@ -115,7 +115,8 @@ typedef struct
 {
 	uint32_t *image;
 	xatlasMesh *meshes;
-	float *utilization;
+	//float *utilization;
+	float* parametricArea; // Array of floats (size charCount), holding each chart's parametric area
 	uint32_t width;
 	uint32_t height;
 	uint32_t atlasCount;
