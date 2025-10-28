@@ -2126,7 +2126,13 @@ struct Hash
 template <>
 struct Hash<float>  // **voddou: float fuzzy hash
 {
-	uint32_t operator()(const float &k) const { return hash(round(k*1000)/1000.f); }
+	uint32_t operator()(const float &k) const { return hash(round(k*10000)/10000.f); }
+};
+
+template <>
+struct Hash<double>  // **voddou
+{
+	uint32_t operator()(const double &k) const { return hash(round(k*10000)/10000.f); }
 };
 
 template <typename Key>
@@ -3179,6 +3185,7 @@ private:
 	Array<uint32_t> m_nextFace; // In: face. Out: the next face in the same group.
 	Array<uint32_t> m_faceCount; // In: face group. Out: number of faces in the group.
 };
+
 
 constexpr MeshFaceGroups::Handle MeshFaceGroups::kInvalid;
 
@@ -5487,7 +5494,7 @@ struct PlanarCharts
 							continue;
 						}
 					}
-					if (!equal(dot(m_data.faceNormals[face], m_data.faceNormals[oface]), 1.0f, kEpsilon))
+					if (dot(m_data.faceNormals[face], m_data.faceNormals[oface]) < 0.999f)
 						continue; // Not coplanar.
 					const uint32_t next = m_nextRegionFace[face];
 					m_nextRegionFace[face] = oface;
@@ -5549,7 +5556,7 @@ struct PlanarCharts
 							continue; // if Triangle is a part of a Quad/NGon.
 					}
 					const float angle = m_data.edgeDihedralAngles[it.edge()];
-					if (angle > 0.0f && angle < FLT_MAX) { // FLT_MAX on boundaries.
+					if (angle > 0.001f && angle < FLT_MAX) { // FLT_MAX on boundaries.
 						createChart = false;
 						break;
 					}
@@ -5622,6 +5629,7 @@ struct ClusteredCharts
 
 	void compute()
 	{
+		m_faceCharts.fill(-1);
 		const uint32_t faceCount = m_data.mesh->faceCount();
 		m_facesLeft = 0;
 		for (uint32_t i = 0; i < faceCount; i++) {
@@ -5804,8 +5812,24 @@ private:
 #if XA_MERGE_CHARTS
 	void mergeCharts()
 	{
+		int charttests = 0;
+		int boundShare = 0;
+		int lenZeroEdgeShareButMaybeSeams = 0;
+		int proxies = 0;
+		int lengths = 0;
+		int maxBoundLength = 0;
 		XA_PROFILE_START(clusteredChartsMerge)
 		const uint32_t chartCount = m_charts.size();
+		int unassigned = 0;
+		int maxChartId = -1;
+		for (uint32_t f = 0; f < m_faceCharts.size(); f++) {
+			if (m_faceCharts[f] < 0)
+				++unassigned;
+			else if (m_faceCharts[f] > maxChartId)
+				maxChartId = m_faceCharts[f];
+		}
+		printf("mergeCharts(): unassigned faces = %d / %d, maxChartId = %d, chartCount = %d\n",
+			   unassigned, m_faceCharts.size(), maxChartId, (int)m_charts.size());
 		// Merge charts progressively until there's none left to merge.
 		for (;;) {
 			bool merged = false;
@@ -5832,7 +5856,7 @@ private:
 							if (neighborChart == -1)
 								externalBoundaryLength += l;
 							else if (m_charts[neighborChart] != chart) {
-								if ((it.isSeam() && (isNormalSeam(it.edge()) || it.isTextureSeam()))) {
+								if (false){//((it.isSeam() && (isNormalSeam(it.edge()) || it.isTextureSeam()))) {
 									externalBoundaryLength += l;
 								} else {
 									m_sharedBoundaryLengths[neighborChart] += l;
@@ -5846,40 +5870,64 @@ private:
 				for (int cc = chartCount - 1; cc >= 0; cc--) {
 					if (cc == c)
 						continue;
-					Chart *chart2 = m_charts[cc];
+					Chart* chart2 = m_charts[cc];
 					if (chart2 == nullptr)
 						continue;
 					// Must share a boundary.
-					if (m_sharedBoundaryLengths[cc] <= 0.0f)
+					++charttests;
+					if (m_sharedBoundaryLengths[cc] <= 0.0f) {
+						if (m_sharedBoundaryEdgeCountNoSeams[cc] > 0) {
+							printf("Charts %d and %d are neighbors but length=0!\n", c, cc);
+							++lenZeroEdgeShareButMaybeSeams;
+						}
+						++boundShare;
 						continue;
+					}
 					// Compare proxies.
-					if (dot(chart2->basis.normal, chart->basis.normal) < XA_MERGE_CHARTS_MIN_NORMAL_DEVIATION)
-						continue;
+					//if (dot(chart2->basis.normal, chart->basis.normal) < XA_MERGE_CHARTS_MIN_NORMAL_DEVIATION) {
+					//	++proxies;
+					//	printf("proxy skip reason, dot=%f\n", dot(chart2->basis.normal, chart->basis.normal));
+					//	continue;
+					//}
 					// Obey max chart area and boundary length.
-					if (m_data.options.maxChartArea > 0.0f && chart->area + chart2->area > m_data.options.maxChartArea)
+					if (m_data.options.maxChartArea > 0.0f && chart->area + chart2->area > m_data.options.maxChartArea) {
+						++lengths;
 						continue;
-					if (m_data.options.maxBoundaryLength > 0.0f && chart->boundaryLength + chart2->boundaryLength - m_sharedBoundaryLengthsNoSeams[cc] > m_data.options.maxBoundaryLength)
+					}
+					if (m_data.options.maxBoundaryLength > 0.0f && chart->boundaryLength + chart2->boundaryLength - m_sharedBoundaryLengthsNoSeams[cc] > m_data.options.maxBoundaryLength) {
+						++maxBoundLength;
 						continue;
+					}
 					// Merge if chart2 has a single face.
 					// chart1 must have more than 1 face.
 					// chart2 area must be <= 10% of chart1 area. **voddou: I removed that criterion
-					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && chart->faces.size() > 1 && chart2->faces.size() == 1)// && chart2->area <= chart->area * 0.1f)
-						goto merge;
-					// Merge if chart2 has two faces (probably a quad), and chart1 bounds at least 2 of its edges.
-					if (chart2->faces.size() == 2 && m_sharedBoundaryEdgeCountNoSeams[cc] >= 2)
-						goto merge;
-					// Merge if chart2 is wholely inside chart1, ignoring seams.
-					if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && equal((double)m_sharedBoundaryLengthsNoSeams[cc], chart2->boundaryLength, (double)kEpsilon))
-						goto merge;
-					if (m_sharedBoundaryLengths[cc] > 0.2f * max(0.0, chart->boundaryLength - externalBoundaryLength) ||
-						m_sharedBoundaryLengths[cc] > 0.35f * chart2->boundaryLength) //**voddo: original 0.75
-						goto merge;
-					continue;
+					//if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && chart->faces.size() > 1 && chart2->faces.size() == 1)// && chart2->area <= chart->area * 0.1f)
+                //    printf("[MERGE] Chart %d and Chart %d: sharedBoundaryLength=%.2f, externalBoundaryLength=%.2f, chart1Boundary=%.2f, chart2Boundary=%.2f",
+                  //         c, cc, m_sharedBoundaryLengths[cc], externalBoundaryLength, chart->boundaryLength, chart2->boundaryLength);
+                    goto merge;
+                    // Merge if chart2 has two faces (probably a quad), and chart1 bounds at least 2 of its edges.
+                    if (chart2->faces.size() == 2 && m_sharedBoundaryEdgeCountNoSeams[cc] >= 2) {
+              //          printf("[MERGE] Chart %d and Chart %d: sharedBoundaryLength=%.2f, externalBoundaryLength=%.2f, chart1Boundary=%.2f, chart2Boundary=%.2f", c, cc, m_sharedBoundaryLengths[cc], externalBoundaryLength, chart->boundaryLength, chart2->boundaryLength);
+                        goto merge;
+                    }
+                    // Merge if chart2 is wholely inside chart1, ignoring seams.
+                    if (m_sharedBoundaryLengthsNoSeams[cc] > 0.0f && equal((double)m_sharedBoundaryLengthsNoSeams[cc], chart2->boundaryLength, (double)kEpsilon))
+                    {
+            //            printf("[MERGE] Chart %d and Chart %d: sharedBoundaryLength=%.2f, externalBoundaryLength=%.2f, chart1Boundary=%.2f, chart2Boundary=%.2f", c, cc, m_sharedBoundaryLengths[cc], externalBoundaryLength, chart->boundaryLength, chart2->boundaryLength);
+                        goto merge;
+                    }
+                    if (m_sharedBoundaryLengths[cc] > 0.2f * max(0.0, chart->boundaryLength - externalBoundaryLength) ||
+                        m_sharedBoundaryLengths[cc] > 0.35f * chart2->boundaryLength) //**voddou: original 0.75
+                    {
+          //              printf("[MERGE] Chart %d and Chart %d: sharedBoundaryLength=%.2f, externalBoundaryLength=%.2f, chart1Boundary=%.2f, chart2Boundary=%.2f							   ", c, cc, m_sharedBoundaryLengths[cc], externalBoundaryLength, chart->boundaryLength, chart2->boundaryLength);
+                        goto merge;
+                    }
+                    continue;
 				merge:
 					if (!mergeChart(chart, chart2, m_sharedBoundaryLengthsNoSeams[cc]))
 						continue;
 					merged = true;
-					//break; // **voddou: commented out
+					break; // **voddou: comment out?
 				}
 				if (merged)
 					break;
@@ -5887,6 +5935,7 @@ private:
 			if (!merged)
 				break;
 		}
+        //printf("ClusteredCharts::mergeCharts, skipped merges: total tests=%d, boundShare=%d, lenZero=%d, proxies=%d, lengths=%d, maxBoundLength=%d\n", charttests, boundShare, lenZeroEdgeShareButMaybeSeams, proxies, lengths, maxBoundLength);
 		// Remove deleted charts.
 		for (int c = 0; c < int32_t(m_charts.size()); /*do not increment if removed*/) {
 			if (m_charts[c] == nullptr) {
@@ -5937,7 +5986,7 @@ private:
 		addFaceToChart(chart, chart->seed);
 		// Grow the chart as much as possible within the given threshold.
 		for (;;) {
-			if (chart->candidates.count() == 0 || chart->candidates.peekCost() > threshold)
+			if (chart->candidates.count() == 0)// || chart->candidates.peekCost() > threshold)
 				break;
 			const uint32_t f = chart->candidates.pop();
 			if (m_data.isFaceInChart.get(f))
@@ -6186,8 +6235,8 @@ private:
 		// Penalize faces that cross seams, reward faces that close seams or reach boundaries.
 		// Make sure normal seams are fully respected:
 		const double normalSeam = computeNormalSeamMetric(chart, face);
-		if (m_data.options.normalSeamWeight >= 1000.0f && normalSeam > 0.0f)
-			return FLT_MAX;
+		//if (m_data.options.normalSeamWeight >= 1000.0f && normalSeam > 0.0f)
+		//	return FLT_MAX;
 		cost += m_data.options.normalSeamWeight * normalSeam;
 		cost += m_data.options.roundnessWeight * computeRoundnessMetric(chart, newBoundaryLength, newChartArea);
 		cost += m_data.options.straightnessWeight * computeStraightnessMetric(chart, face);
@@ -6198,7 +6247,7 @@ private:
 		// @@ Tweaking the normal and texture seam metrics.
 		// - Cause more impedance. Never cross 90 degree edges.
 		XA_DEBUG_ASSERT(isFinite(cost));
-		return cost;
+		return 0.001;//cost;
 	}
 
 	// Returns a value in [0-1].
