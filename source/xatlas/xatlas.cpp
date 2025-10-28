@@ -440,8 +440,8 @@ static constexpr float kPi = 3.14159265358979323846f;
 static constexpr float kPi2 = 6.28318530717958647692f;
 static constexpr float kEpsilon = 0.00001f;
 static constexpr float kAreaEpsilon = FLT_EPSILON;
-static constexpr float kNormalEpsilon = 0.001f;
-static constexpr float kNormalSeamEpsilon = 0.2f;
+static constexpr float kNormalEpsilon = 0.0001f;
+static constexpr float kNormalSeamEpsilon = 0.0001f;
 
 static int align(int x, int a)
 {
@@ -5487,8 +5487,10 @@ struct PlanarCharts
 							continue;
 						}
 					}
-					if (!equal(dot(m_data.faceNormals[face], m_data.faceNormals[oface]), 1.0f, kEpsilon))
+					if (!equal(dot(m_data.faceNormals[face], m_data.faceNormals[oface]), 1.0f, kNormalSeamEpsilon))
 						continue; // Not coplanar.
+					if (dot(m_data.faceNormals[f], m_data.faceNormals[oface]) < 0.9f)
+						continue; // too large deviation
 					const uint32_t next = m_nextRegionFace[face];
 					m_nextRegionFace[face] = oface;
 					m_nextRegionFace[oface] = next;
@@ -5879,7 +5881,7 @@ private:
 					if (!mergeChart(chart, chart2, m_sharedBoundaryLengthsNoSeams[cc]))
 						continue;
 					merged = true;
-					//break; // **voddou: commented out
+					break; // **voddou: <s>commented out</s> restored
 				}
 				if (merged)
 					break;
