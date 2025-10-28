@@ -441,6 +441,7 @@ static constexpr float kPi2 = 6.28318530717958647692f;
 static constexpr float kEpsilon = 0.00001f;
 static constexpr float kAreaEpsilon = FLT_EPSILON;
 static constexpr float kNormalEpsilon = 0.001f;
+static constexpr float kNormalSeamEpsilon = 0.2f;
 
 static int align(int x, int a)
 {
@@ -6260,13 +6261,13 @@ private:
 			const uint32_t ov1 = m_data.mesh->vertexAt(meshEdgeIndex1(oppositeEdge));
 			if (v0 == ov1 && v1 == ov0)
 				return false;
-			return !equal(m_data.mesh->normal(v0), m_data.mesh->normal(ov1), kNormalEpsilon) || !equal(m_data.mesh->normal(v1), m_data.mesh->normal(ov0), kNormalEpsilon);
+			return !equal(m_data.mesh->normal(v0), m_data.mesh->normal(ov1), kNormalSeamEpsilon) || !equal(m_data.mesh->normal(v1), m_data.mesh->normal(ov0), kNormalSeamEpsilon);
 		}
 		const uint32_t f0 = meshEdgeFace(edge);
 		const uint32_t f1 = meshEdgeFace(oppositeEdge);
 		if (m_planarCharts.regionIdFromFace(f0) == m_planarCharts.regionIdFromFace(f1))
 			return false;
-		return !equal(m_data.faceNormals[f0], m_data.faceNormals[f1], kNormalEpsilon);
+		return !equal(m_data.faceNormals[f0], m_data.faceNormals[f1], kNormalSeamEpsilon);
 	}
 
 	float computeNormalSeamMetric(Chart *chart, uint32_t firstFace) const
