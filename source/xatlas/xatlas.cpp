@@ -10153,7 +10153,7 @@ void PackCharts(Atlas *atlas, PackOptions packOptions)
 					const uint32_t indexOffset = faces[f] * 3;
 					for (uint32_t j = 0; j < 3; j++) {
 						outputMesh.indexArray[indexOffset + j] = indices[f * 3 + j];
-						outputMesh.originalFaceArray[indexOffset + j] = f;
+						outputMesh.originalFaceArray[indexOffset + j] = faces[f];
 					}
 				}
 				firstVertex = vertices.length;
