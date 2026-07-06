@@ -1,0 +1,14 @@
+# Pentagon with three exactly collinear vertices (v1 v2 v3).
+# The polygon's total area is large so AddMesh does not ignore it, but the
+# ear-clipping triangulator ends with the collinear trio and emits an
+# exactly-zero-area triangle that enters the chart pipeline. This used to be
+# able to starve the ClusteredCharts seed selection (zero-area planar region)
+# and hang; the fix falls back to seeding with the first unassigned face.
+# The face deliberately starts at v4 so the triangulator's projection basis
+# (built from the first three corners) is non-degenerate.
+v 0 0 0
+v 1 0 0
+v 2 0 0
+v 2.05 3 0
+v -0.05 3 0
+f 4 5 1 2 3

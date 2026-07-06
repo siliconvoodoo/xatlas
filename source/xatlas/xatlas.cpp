@@ -498,7 +498,8 @@ static bool isFinite(float f)
 {
 	FloatUint32 fu;
 	fu.f = f;
-	return fu.u != 0x7F800000u && fu.u != 0x7F800001u;
+	// Inf and NaN (any sign, any payload) have all exponent bits set.
+	return (fu.u & 0x7F800000u) != 0x7F800000u;
 }
 
 static bool isNan(float f)
@@ -3460,14 +3461,19 @@ public:
 		// Run tasks from the group queue until empty.
 		TaskGroup &group = m_groups[handle->value];
 		for (;;) {
-			Task *task = nullptr;
+			// Copy the task while holding the lock: a concurrent run() can push_back and realloc the queue,
+			// which would invalidate a pointer into it.
+			Task task = {};
+			bool hasTask = false;
 			group.queueLock.lock();
-			if (group.queueHead < group.queue.size())
-				task = &group.queue[group.queueHead++];
+			if (group.queueHead < group.queue.size()) {
+				task = group.queue[group.queueHead++];
+				hasTask = true;
+			}
 			group.queueLock.unlock();
-			if (!task)
+			if (!hasTask)
 				break;
-			task->func(group.userData, task->userData);
+			task.func(group.userData, task.userData);
 			group.ref--;
 		}
 		// Even though the task queue is empty, workers can still be running tasks.
@@ -3514,23 +3520,27 @@ private:
 				if (scheduler->m_shutdown)
 					return;
 				// Look for a task in any of the groups and run it.
+				// Copy the task while holding the lock: a concurrent run() can push_back and realloc the queue,
+				// which would invalidate a pointer into it.
 				TaskGroup *group = nullptr;
-				Task *task = nullptr;
+				Task task = {};
+				bool hasTask = false;
 				for (uint32_t i = 0; i < scheduler->m_maxGroups; i++) {
 					group = &scheduler->m_groups[i];
 					if (group->free || group->ref == 0)
 						continue;
 					group->queueLock.lock();
 					if (group->queueHead < group->queue.size()) {
-						task = &group->queue[group->queueHead++];
+						task = group->queue[group->queueHead++];
+						hasTask = true;
 						group->queueLock.unlock();
 						break;
 					}
 					group->queueLock.unlock();
 				}
-				if (!task)
+				if (!hasTask)
 					break;
-				task->func(group->userData, task->userData);
+				task.func(group->userData, task.userData);
 				group->ref--;
 			}
 		}
@@ -5294,7 +5304,11 @@ struct AtlasData
 				XA_DEBUG_ASSERT(edgeLengths[edge] > 0.0f);
 			}
 			faceAreas[f] = mesh->computeFaceArea(f);
-			XA_DEBUG_ASSERT(faceAreas[f] > 0.0f);
+			// Triangle faces with zero area are ignored by AddMesh and never get here, but polygon (quad/ngon)
+			// triangulation can emit an exactly-zero-area triangle when the polygon has collinear corners
+			// (AddMesh only rejects polygons whose *total* area is ~zero). Those faces are tolerated downstream
+			// (see the seed selection fallback in ClusteredCharts::createChart).
+			XA_DEBUG_ASSERT(faceAreas[f] > 0.0f || mesh->trianglesToPolygonIDs.size() > 0);
 			if (options.useInputMeshUvs)
 				faceUvAreas[f] = mesh->computeFaceParametricArea(f);
 			faceNormals[f] = mesh->computeFaceNormal(f);
@@ -5919,9 +5933,12 @@ private:
 		const uint32_t faceCount = m_data.mesh->faceCount();
 		bool isPickedFace = false;
 		uint32_t seed = 0;
+		uint32_t firstUnassignedFace = UINT32_MAX;
 		for (uint32_t f = 0; f < faceCount; f++) {
 			if (m_data.isFaceInChart.get(f))
 				continue;
+			if (firstUnassignedFace == UINT32_MAX)
+				firstUnassignedFace = f;
 			const float area = m_planarCharts.regionArea(m_planarCharts.regionIdFromFace(f));
 			if (area > largestArea) {
 				largestArea = area;
@@ -5929,8 +5946,13 @@ private:
 				isPickedFace = true;
 			}
 		}
-		if (!isPickedFace && m_data.isFaceInChart.get(seed))
-			return;  // all faces are already added to charts.
+		if (!isPickedFace) {
+			if (firstUnassignedFace == UINT32_MAX)
+				return;  // all faces are already added to charts.
+			// Remaining faces all belong to zero-area planar regions (exactly degenerate triangles).
+			// Seed with one anyway so the placeSeeds/fillHoles loops (while facesLeft > 0) make progress instead of spinning forever.
+			seed = firstUnassignedFace;
+		}
 		// Create a new Chart and do further changes.
 		Chart *chart = XA_NEW(MemTag::Default, Chart);
 		chart->id = (int)m_charts.size();
@@ -6052,7 +6074,8 @@ private:
 				const uint32_t nextFace = i_face + 1;
 				for (uint32_t f = nextFace; f < meshFaceCount; f++) {
 					if (m_data.mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
-						if (!chart->faces.contains(f)) {
+						// Don't steal a face already assigned to a chart: it would double-decrement m_facesLeft and corrupt m_faceCharts.
+						if (!chart->faces.contains(f) && !m_data.isFaceInChart.get(f)) {
 							chart->faces.push_back(f);
 						}
 					}
@@ -6062,7 +6085,7 @@ private:
 					int32_t f = static_cast<int32_t>(i_face) - 1;
 					while (f >= 0) {
 						if (m_data.mesh->trianglesToPolygonIDs[f] == faceQuadOrNGonID) {
-							if (!chart->faces.contains(f)) {
+							if (!chart->faces.contains(f) && !m_data.isFaceInChart.get(f)) {
 								chart->faces.push_back(f);
 							}
 						}
@@ -7053,7 +7076,7 @@ struct PiecewiseParam
 							// Add all 3 vertices.
 							for (uint32_t i = 0; i < 3; i++) {
 								const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
-								if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+								if(!m_vertexInPatch.get(vertex)) m_vertexInPatch.set(vertex);
 							}
 						}
 					}
@@ -7071,7 +7094,7 @@ struct PiecewiseParam
 								// // Add all 3 vertices.
 								for (uint32_t i = 0; i < 3; i++) {
 									const uint32_t vertex = m_mesh->vertexAt(f * 3 + i);
-									if(!m_vertexInPatch.get(f)) m_vertexInPatch.set(vertex);
+									if(!m_vertexInPatch.get(vertex)) m_vertexInPatch.set(vertex);
 								}
 							}
 						}
@@ -9532,10 +9555,14 @@ AddMeshError AddMesh(Atlas *atlas, const MeshDecl &meshDecl, uint32_t meshCountH
 					|| faceVertexCount < 3) {
 					mesh->~Mesh();
 					XA_FREE(mesh);
+					if (meshPolygonMapping) {
+						meshPolygonMapping->~MeshPolygonMapping();
+						XA_FREE(meshPolygonMapping);
+					}
 					return AddMeshError::IndexOutOfRange;
 				}
 			} else {
-				polygon[i] = polygonVertexStartID + i;
+				polygon.push_back(polygonVertexStartID + i);
 			}
 		}
 
