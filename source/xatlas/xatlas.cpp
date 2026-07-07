@@ -2124,12 +2124,6 @@ struct Hash
 	uint32_t operator()(const Key &k) const { return hash(k); }
 };
 
-template <>
-struct Hash<float>  // **voddou: float fuzzy hash
-{
-	uint32_t operator()(const float &k) const { return hash(round(k*1000)/1000.f); }
-};
-
 template <typename Key>
 struct PassthroughHash
 {
@@ -2140,12 +2134,6 @@ template <typename Key>
 struct Equal
 {
 	bool operator()(const Key &k0, const Key &k1) const { return k0 == k1; }
-};
-
-template <>
-struct Equal<float>  // **voddou: float fuzzy equal (for UV colocality tolerance in chart growing)
-{
-	bool operator()(const float &k0, const float &k1) const { return k0 - k1 < FLT_EPSILON; }
 };
 
 template<typename Key, typename H = Hash<Key>, typename E = Equal<Key> >
