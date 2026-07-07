@@ -131,6 +131,12 @@ Copyright (c) 2012 Brandon Pelfrey
 
 #define XA_DEBUG_HEAP 0
 #define XA_DEBUG_SINGLE_CHART 0
+#ifndef XA_FUZZY_COLOCAL_DIAG
+#define XA_FUZZY_COLOCAL_DIAG 1 // TEMPORARILY 1 for data gathering, restore to 0 before shipping. Diagnostic only, no behavior change: report vertices (AddMesh positions, AddUvMesh UVs) that are colocal within a tolerance but not bitwise equal, i.e. colocality the exact hash matching misses, to pick a data-driven tolerance.
+#endif
+#ifndef XA_FUZZY_COLOCAL_DIAG_FILE
+#define XA_FUZZY_COLOCAL_DIAG_FILE "C:\\work\\sisdk4\\extlibs\\xatlas\\source\\xatlas\\uv_fuzzy_diag.txt" // Appended to on every run, delete between data-gathering campaigns.
+#endif
 #define XA_DEBUG_ALL_CHARTS_INVALID 0
 #define XA_DEBUG_EXPORT_ATLAS_IMAGES 0
 #define XA_DEBUG_EXPORT_ATLAS_IMAGES_PER_CHART 0 // Export an atlas image after each chart is added.
@@ -1050,12 +1056,10 @@ static Vector3d max(const Vector3d &a, const Vector3d &b)
 	return Vector3d(max(a.x, b.x), max(a.y, b.y), max(a.z, b.z));
 }
 
-#if XA_DEBUG
 bool isFinite(const Vector3 &v)
 {
 	return isFinite(v.x) && isFinite(v.y) && isFinite(v.z);
 }
-#endif
 
 struct Extents2
 {
@@ -2715,8 +2719,139 @@ public:
 		}
 	}
 
+#if XA_FUZZY_COLOCAL_DIAG
+	// Diagnostic pass (no behavior change): createColocalsHash (used when epsilon <=
+	// FLT_EPSILON, the default) links only bitwise-identical positions; this reports, per
+	// log-spaced candidate tolerance, how many vertices are within tolerance of each other
+	// but not bitwise equal, i.e. colocality the exact hash misses. Distances are Chebyshev
+	// (max per-component delta) to match equal(Vector3, Vector3, epsilon). Tolerances are
+	// absolute; the mesh AABB extent is reported so they can be normalized during analysis.
+	// O(n) grid probe with cell size = max tolerance; meshes with many unique positions in
+	// one 1e-3 cell degrade to quadratic, acceptable for an opt-in diagnostic.
+	void fuzzyColocalDiagnostic() const
+	{
+		const uint32_t vertexCount = m_positions.size();
+		// Dedupe bitwise-identical positions; multiplicity = vertices sharing the exact value.
+		// Only unique values are added, so HashMap insertion index == uniquePositions index.
+		HashMap<Vector3> posMap(MemTag::Default, vertexCount == 0 ? 1 : vertexCount);
+		Array<Vector3> uniquePositions;
+		Array<uint32_t> multiplicity;
+		uint32_t nonFiniteCount = 0;
+		Vector3 aabbMin(FLT_MAX, FLT_MAX, FLT_MAX), aabbMax(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+		for (uint32_t i = 0; i < vertexCount; i++) {
+			const Vector3 &pos = m_positions[i];
+			if (!isFinite(pos)) {
+				nonFiniteCount++;
+				continue;
+			}
+			aabbMin = min(aabbMin, pos);
+			aabbMax = max(aabbMax, pos);
+			const uint32_t existing = posMap.get(pos);
+			if (existing == UINT32_MAX) {
+				posMap.add(pos);
+				uniquePositions.push_back(pos);
+				multiplicity.push_back(1);
+			} else {
+				multiplicity[existing]++;
+			}
+		}
+		const uint32_t uniqueCount = uniquePositions.size();
+		const float tolerances[] = { 1e-7f, 1e-6f, 1e-5f, 1e-4f, 1e-3f };
+		const uint32_t toleranceCount = 5;
+		const float maxTol = tolerances[toleranceCount - 1];
+		const float cellSize = maxTol;
+		struct Cell
+		{
+			int32_t x, y, z;
+			bool operator==(const Cell &c) const { return x == c.x && y == c.y && z == c.z; }
+		};
+		// Uniform grid keyed on cell coordinates; insertion index == uniquePositions index.
+		HashMap<Cell> cellMap(MemTag::Default, uniqueCount == 0 ? 1 : uniqueCount);
+		for (uint32_t i = 0; i < uniqueCount; i++) {
+			const Cell cell = { (int32_t)floorf(uniquePositions[i].x / cellSize), (int32_t)floorf(uniquePositions[i].y / cellSize), (int32_t)floorf(uniquePositions[i].z / cellSize) };
+			cellMap.add(cell);
+		}
+		uint64_t nearPairs[toleranceCount] = {}; // Bitwise-distinct unique position pairs within tolerance.
+		uint64_t positionsMerged[toleranceCount] = {}; // Unique positions with at least one such neighbor.
+		uint64_t verticesAffected[toleranceCount] = {}; // Same, weighted by vertex multiplicity.
+		uint64_t missedLinks[toleranceCount] = {}; // Vertex pair links exact matching misses (pair multiplicity product).
+		const float histEdges[] = { 1e-8f, 1e-7f, 1e-6f, 1e-5f, 1e-4f, 1e-3f };
+		const uint32_t histBinCount = 6;
+		uint64_t nnHistogram[histBinCount] = {};
+		for (uint32_t i = 0; i < uniqueCount; i++) {
+			const Vector3 &pos = uniquePositions[i];
+			const int32_t cx = (int32_t)floorf(pos.x / cellSize);
+			const int32_t cy = (int32_t)floorf(pos.y / cellSize);
+			const int32_t cz = (int32_t)floorf(pos.z / cellSize);
+			float nn = FLT_MAX;
+			for (int32_t oz = -1; oz <= 1; oz++) {
+				for (int32_t oy = -1; oy <= 1; oy++) {
+					for (int32_t ox = -1; ox <= 1; ox++) {
+						const Cell key = { cx + ox, cy + oy, cz + oz };
+						for (uint32_t j = cellMap.get(key); j != UINT32_MAX; j = cellMap.getNext(key, j)) {
+							if (j == i)
+								continue;
+							const float dx = fabsf(pos.x - uniquePositions[j].x);
+							const float dy = fabsf(pos.y - uniquePositions[j].y);
+							const float dz = fabsf(pos.z - uniquePositions[j].z);
+							float d = dx > dy ? dx : dy;
+							if (dz > d)
+								d = dz;
+							if (d > maxTol)
+								continue;
+							if (d < nn)
+								nn = d;
+							if (j > i) { // Count each pair once.
+								for (uint32_t t = 0; t < toleranceCount; t++) {
+									if (d <= tolerances[t]) {
+										nearPairs[t]++;
+										missedLinks[t] += (uint64_t)multiplicity[i] * multiplicity[j];
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			if (nn <= maxTol) {
+				for (uint32_t t = 0; t < toleranceCount; t++) {
+					if (nn <= tolerances[t]) {
+						positionsMerged[t]++;
+						verticesAffected[t] += multiplicity[i];
+					}
+				}
+				uint32_t bin = 0;
+				while (bin < histBinCount - 1 && nn > histEdges[bin])
+					bin++;
+				nnHistogram[bin]++;
+			}
+		}
+		// AddMeshTasks run concurrently; serialize appends so per-mesh reports don't interleave.
+		static std::mutex diagMutex;
+		std::lock_guard<std::mutex> lock(diagMutex);
+		FILE *file;
+		XA_FOPEN(file, XA_FUZZY_COLOCAL_DIAG_FILE, "a");
+		if (!file)
+			return;
+		fprintf(file, "mesh %u positions: %u vertices (%u non-finite skipped), %u bitwise-unique positions, epsilon %g, aabb extent (%g %g %g)\n", m_id, vertexCount, nonFiniteCount, uniqueCount, m_epsilon, aabbMax.x - aabbMin.x, aabbMax.y - aabbMin.y, aabbMax.z - aabbMin.z);
+		for (uint32_t t = 0; t < toleranceCount; t++)
+			fprintf(file, "   tol %g: %llu near pairs, %llu positions merge, %llu vertices affected, %llu missed links\n", tolerances[t], (unsigned long long)nearPairs[t], (unsigned long long)positionsMerged[t], (unsigned long long)verticesAffected[t], (unsigned long long)missedLinks[t]);
+		fprintf(file, "   nearest-neighbor Chebyshev distance histogram (unique positions with a distinct neighbor within %g):\n", maxTol);
+		for (uint32_t bin = 0; bin < histBinCount; bin++) {
+			if (bin == 0)
+				fprintf(file, "      <= %g: %llu\n", histEdges[0], (unsigned long long)nnHistogram[0]);
+			else
+				fprintf(file, "      (%g, %g]: %llu\n", histEdges[bin - 1], histEdges[bin], (unsigned long long)nnHistogram[bin]);
+		}
+		fclose(file);
+	}
+#endif
+
 	void createColocals()
 	{
+#if XA_FUZZY_COLOCAL_DIAG
+		fuzzyColocalDiagnostic();
+#endif
 		if (m_epsilon <= FLT_EPSILON)
 			createColocalsHash();
 		else
@@ -2742,7 +2877,8 @@ public:
 				const uint32_t vertex0 = m_indices[edge];
 				const uint32_t vertex1 = m_indices[i * 3 + (j + 1) % 3];
 				// If there is an edge with opposite winding to this one, the edge isn't on a boundary.
-				const uint32_t oppositeEdge = findEdge(vertex1, vertex0);
+				// Never pair an edge with an edge of its own face (see findEdge).
+				const uint32_t oppositeEdge = findEdge(vertex1, vertex0, i);
 				if (oppositeEdge != UINT32_MAX) {
 					m_oppositeEdges[edge] = oppositeEdge;
 				} else {
@@ -2755,7 +2891,13 @@ public:
 	}
 
 	/// Find edge, test all colocals.
-	uint32_t findEdge(uint32_t vertex0, uint32_t vertex1) const
+	/// excludeFace: don't match edges of this face. With epsilon colocality (BVH path), an
+	/// edge shorter than epsilon has its two endpoints colocal to each other, so without
+	/// this exclusion findEdge can return the edge itself (or a sibling edge of the same
+	/// face) as its "opposite", making oppositeFace() == face. Flood fills that mark faces
+	/// visited via a not-yet-linked seed then never terminate (e.g. PlanarCharts::compute),
+	/// and boundary walks assume the opposite edge is in another face.
+	uint32_t findEdge(uint32_t vertex0, uint32_t vertex1, uint32_t excludeFace = UINT32_MAX) const
 	{
 		// Try to find exact vertex match first.
 		{
@@ -2763,7 +2905,7 @@ public:
 			uint32_t edge = m_edgeMap.get(key);
 			while (edge != UINT32_MAX) {
 				// Don't find edges of ignored faces.
-				if (!isFaceIgnored(meshEdgeFace(edge)))
+				if (!isFaceIgnored(meshEdgeFace(edge)) && meshEdgeFace(edge) != excludeFace)
 					return edge;
 				edge = m_edgeMap.getNext(key, edge);
 			}
@@ -2778,7 +2920,7 @@ public:
 					uint32_t edge = m_edgeMap.get(key);
 					while (edge != UINT32_MAX) {
 						// Don't find edges of ignored faces.
-						if (!isFaceIgnored(meshEdgeFace(edge)))
+						if (!isFaceIgnored(meshEdgeFace(edge)) && meshEdgeFace(edge) != excludeFace)
 							return edge;
 						edge = m_edgeMap.getNext(key, edge);
 					}
@@ -6653,11 +6795,129 @@ static void runComputeUvMeshChartsTask(void * /*groupUserData*/, void *taskUserD
 	XA_PROFILE_END(computeChartsThread)
 }
 
+#if XA_FUZZY_COLOCAL_DIAG
+// Diagnostic pass (no behavior change): quantifies UV vertices that are colocal within a
+// tolerance but not bitwise equal. ComputeUvMeshChartsTask::m_uvToEdgeMap matches UVs
+// exactly, so such near-duplicates split charts at fake seams. Reports, per log-spaced
+// candidate tolerance, how many bitwise-unique UVs would merge and how many edge links
+// exact matching misses, plus a nearest-neighbor distance histogram. Distances use the
+// Chebyshev metric (max per-component delta) to match a per-component tolerance equality.
+// O(n) grid probe with cell size = max tolerance; degenerate meshes with many unique UVs
+// in one 1e-3 cell degrade to quadratic, acceptable for an opt-in diagnostic.
+static void uvMeshFuzzyDiagnostic(const UvMesh *mesh, uint32_t meshIndex)
+{
+	const uint32_t indexCount = mesh->indices.size();
+	// Dedupe bitwise-identical UVs; multiplicity = corners sharing the exact value.
+	// Only unique values are added, so HashMap insertion index == uniqueUvs index.
+	HashMap<Vector2> uvMap(MemTag::Default, indexCount);
+	Array<Vector2> uniqueUvs;
+	Array<uint32_t> multiplicity;
+	uint32_t nonFiniteCount = 0;
+	for (uint32_t i = 0; i < indexCount; i++) {
+		const Vector2 &uv = mesh->texcoords[mesh->indices[i]];
+		if (!isFinite(uv)) {
+			nonFiniteCount++;
+			continue;
+		}
+		const uint32_t existing = uvMap.get(uv);
+		if (existing == UINT32_MAX) {
+			uvMap.add(uv);
+			uniqueUvs.push_back(uv);
+			multiplicity.push_back(1);
+		} else {
+			multiplicity[existing]++;
+		}
+	}
+	const uint32_t uniqueCount = uniqueUvs.size();
+	const float tolerances[] = { 1e-7f, 1e-6f, 1e-5f, 1e-4f, 1e-3f };
+	const uint32_t toleranceCount = 5;
+	const float maxTol = tolerances[toleranceCount - 1];
+	const float cellSize = maxTol;
+	// Uniform grid keyed on packed cell coordinates; insertion index == uniqueUvs index.
+	HashMap<uint64_t> cellMap(MemTag::Default, uniqueCount == 0 ? 1 : uniqueCount);
+	for (uint32_t i = 0; i < uniqueCount; i++) {
+		const int32_t cx = (int32_t)floorf(uniqueUvs[i].x / cellSize);
+		const int32_t cy = (int32_t)floorf(uniqueUvs[i].y / cellSize);
+		cellMap.add(((uint64_t)(uint32_t)cx << 32) | (uint32_t)cy);
+	}
+	uint64_t nearPairs[toleranceCount] = {}; // Bitwise-distinct unique UV pairs within tolerance.
+	uint64_t uvsMerged[toleranceCount] = {}; // Unique UVs with at least one such neighbor.
+	uint64_t cornersAffected[toleranceCount] = {}; // Same, weighted by corner multiplicity.
+	uint64_t missedLinks[toleranceCount] = {}; // Corner pair links exact matching misses (pair multiplicity product).
+	const float histEdges[] = { 1e-8f, 1e-7f, 1e-6f, 1e-5f, 1e-4f, 1e-3f };
+	const uint32_t histBinCount = 6;
+	uint64_t nnHistogram[histBinCount] = {};
+	for (uint32_t i = 0; i < uniqueCount; i++) {
+		const Vector2 &uv = uniqueUvs[i];
+		const int32_t cx = (int32_t)floorf(uv.x / cellSize);
+		const int32_t cy = (int32_t)floorf(uv.y / cellSize);
+		float nn = FLT_MAX;
+		for (int32_t oy = -1; oy <= 1; oy++) {
+			for (int32_t ox = -1; ox <= 1; ox++) {
+				const uint64_t key = ((uint64_t)(uint32_t)(cx + ox) << 32) | (uint32_t)(cy + oy);
+				for (uint32_t j = cellMap.get(key); j != UINT32_MAX; j = cellMap.getNext(key, j)) {
+					if (j == i)
+						continue;
+					const float dx = fabsf(uv.x - uniqueUvs[j].x);
+					const float dy = fabsf(uv.y - uniqueUvs[j].y);
+					const float d = dx > dy ? dx : dy;
+					if (d > maxTol)
+						continue;
+					if (d < nn)
+						nn = d;
+					if (j > i) { // Count each pair once.
+						for (uint32_t t = 0; t < toleranceCount; t++) {
+							if (d <= tolerances[t]) {
+								nearPairs[t]++;
+								missedLinks[t] += (uint64_t)multiplicity[i] * multiplicity[j];
+							}
+						}
+					}
+				}
+			}
+		}
+		if (nn <= maxTol) {
+			for (uint32_t t = 0; t < toleranceCount; t++) {
+				if (nn <= tolerances[t]) {
+					uvsMerged[t]++;
+					cornersAffected[t] += multiplicity[i];
+				}
+			}
+			uint32_t bin = 0;
+			while (bin < histBinCount - 1 && nn > histEdges[bin])
+				bin++;
+			nnHistogram[bin]++;
+		}
+	}
+	// Append (not truncate) so a batch run over many assets accumulates one report file.
+	FILE *file;
+	XA_FOPEN(file, XA_FUZZY_COLOCAL_DIAG_FILE, "a");
+	if (!file)
+		return;
+	fprintf(file, "mesh %u: %u corners (%u non-finite skipped), %u bitwise-unique UVs\n", meshIndex, indexCount, nonFiniteCount, uniqueCount);
+	for (uint32_t t = 0; t < toleranceCount; t++)
+		fprintf(file, "   tol %g: %llu near pairs, %llu UVs merge, %llu corners affected, %llu missed edge links\n", tolerances[t], (unsigned long long)nearPairs[t], (unsigned long long)uvsMerged[t], (unsigned long long)cornersAffected[t], (unsigned long long)missedLinks[t]);
+	fprintf(file, "   nearest-neighbor Chebyshev distance histogram (unique UVs with a distinct neighbor within %g):\n", maxTol);
+	for (uint32_t bin = 0; bin < histBinCount; bin++) {
+		if (bin == 0)
+			fprintf(file, "      <= %g: %llu\n", histEdges[0], (unsigned long long)nnHistogram[0]);
+		else
+			fprintf(file, "      (%g, %g]: %llu\n", histEdges[bin - 1], histEdges[bin], (unsigned long long)nnHistogram[bin]);
+	}
+	fclose(file);
+}
+#endif
+
 static bool computeUvMeshCharts(TaskScheduler *taskScheduler, ArrayView<UvMesh *> meshes, ProgressFunc progressFunc, void *progressUserData)
 {
 	uint32_t totalFaceCount = 0;
 	for (uint32_t i = 0; i < meshes.length; i++)
 		totalFaceCount += meshes[i]->indices.size() / 3;
+#if XA_FUZZY_COLOCAL_DIAG
+	// Serial, before task dispatch, so per-mesh reports don't interleave across threads.
+	for (uint32_t i = 0; i < meshes.length; i++)
+		uvMeshFuzzyDiagnostic(meshes[i], i);
+#endif
 	Progress progress(ProgressCategory::ComputeCharts, progressFunc, progressUserData, totalFaceCount);
 	TaskGroupHandle taskGroup = taskScheduler->createTaskGroup(nullptr, meshes.length);
 	Array<ComputeUvMeshChartsTaskArgs> taskArgs;
@@ -7166,8 +7426,11 @@ private:
 					break;
 				}
 			}
-			XA_DEBUG_ASSERT(freeVertex != UINT32_MAX);
-			if (m_vertexInPatch.get(freeVertex)) {
+			// freeVertex == UINT32_MAX: degenerate oface with all vertices on the active
+			// edge. Happens when epsilon colocality (MeshDecl::epsilon > FLT_EPSILON)
+			// unifies two vertices of a source triangle in the unified chart mesh. All
+			// its vertices already have texcoords, so treat it like an enclosed face.
+			if (freeVertex == UINT32_MAX || m_vertexInPatch.get(freeVertex)) {
 #if 1
 				// If the free vertex is already in the patch, the face is enclosed by the patch. Add the face to the patch - don't need to assign texcoords.
 				freeVertex = UINT32_MAX;
@@ -7200,6 +7463,14 @@ private:
 			else
 				localFreeVertex = i;
 		}
+		// With epsilon colocality (MeshDecl::epsilon > FLT_EPSILON) the unified mesh can
+		// contain degenerate faces (duplicated unified vertices, zero-length edges), and the
+		// correspondence above then fails to resolve all three local indices: e.g. a
+		// candidate whose shared edge has both endpoints on the same unified vertex matches
+		// localVertex0 twice and localVertex1 never. Such a face can't be positioned from
+		// this edge; skip it (it can still be enclosed-absorbed or become a later seed).
+		if (localVertex0 == UINT32_MAX || localVertex1 == UINT32_MAX || localFreeVertex == UINT32_MAX)
+			return;
 		// Scale orthogonal projection to match the patch edge.
 		const Vector2 patchEdgeVec = m_texcoords[vertex1] - m_texcoords[vertex0];
 		const Vector2 localEdgeVec = texcoords[localVertex1] - texcoords[localVertex0];
@@ -8705,6 +8976,32 @@ struct Atlas
 					return false;
 			}
 			return true;
+		}
+		// Sanitize charts with non-finite texcoords or areas before anything consumes them.
+		// Degenerate geometry (e.g. epsilon-colocality-unified meshes) can slip NaN through
+		// parameterization: planar charts skip validation entirely and piecewise recompute
+		// output is never re-validated. A NaN-extent chart poisons the atlas area estimate
+		// and never fits anywhere, so the placement loop below allocates new atlases forever
+		// (the guarding assert is compiled out in release). Collapse such charts to a single
+		// texel so packing can proceed.
+		for (uint32_t c = 0; c < chartCount; c++) {
+			Chart *chart = m_charts[c];
+			bool invalidChart = !isFinite(chart->parametricArea) || !isFinite(chart->surfaceArea);
+			if (!invalidChart) {
+				for (uint32_t i = 0; i < chart->uniqueVertexCount(); i++) {
+					if (!isFinite(chart->uniqueVertexAt(i))) {
+						invalidChart = true;
+						break;
+					}
+				}
+			}
+			if (invalidChart) {
+				XA_PRINT_WARNING("   Chart %u has non-finite texcoords or area, collapsing it to a single texel\n", c);
+				for (uint32_t i = 0; i < chart->uniqueVertexCount(); i++)
+					chart->uniqueVertexAt(i) = Vector2(0.0f);
+				chart->parametricArea = 0.0f;
+				chart->surfaceArea = 0.0f;
+			}
 		}
 		// Estimate resolution and/or texels per unit if not specified.
 		m_texelsPerUnit = options.texelsPerUnit;

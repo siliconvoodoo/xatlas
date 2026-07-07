@@ -167,6 +167,7 @@ struct AtlasOptions
 {
 	bool useUvMesh = false; // Use xatlas::AddUvMesh API
 	bool rotateCharts = true; // UvMeshDecl option.
+	float positionEpsilon = 0.0f; // MeshDecl::epsilon. 0 = xatlas default (FLT_EPSILON): only bitwise-identical positions are colocal (hash path). > FLT_EPSILON: epsilon-tolerant colocals (BVH path), i.e. float coalescence.
 	int selectedAtlas;
 	int selectedChart;
 	bool fitToWindow = true;
@@ -186,6 +187,8 @@ struct
 	xatlas::Atlas *data = nullptr;
 	bool useUvMesh = false; // True if xatlas::AddUvMesh API was used - AtlasOptions::useUvMesh was checked when atlas was generated.
 	bool useUvMeshChanged = false;
+	float positionEpsilon = 0.0f; // MeshDecl::epsilon used when the atlas was generated.
+	bool positionEpsilonChanged = false;
 	std::thread *thread = nullptr;
 	AtlasStatus status;
 	AtlasOptions options;
@@ -407,9 +410,9 @@ static void atlasGenerateThread()
 	if (firstRun)
 		xatlas::SetAlloc(mi_realloc);
 #endif
-	// Create xatlas context and add meshes on first run only, unless uv mesh option has changed.
-	if (firstRun || s_atlas.useUvMeshChanged) {
-		if (s_atlas.useUvMeshChanged && s_atlas.data) {
+	// Create xatlas context and add meshes on first run only, unless uv mesh option or position epsilon has changed.
+	if (firstRun || s_atlas.useUvMeshChanged || s_atlas.positionEpsilonChanged) {
+		if ((s_atlas.useUvMeshChanged || s_atlas.positionEpsilonChanged) && s_atlas.data) {
 			xatlas::Destroy(s_atlas.data);
 			s_atlas.data = nullptr;
 		}
@@ -467,6 +470,8 @@ static void atlasGenerateThread()
 				meshDecl.indexFormat = xatlas::IndexFormat::UInt32;
 				meshDecl.indexOffset = -(int32_t)object.firstVertex;
 				meshDecl.faceIgnoreData = (const bool *)ignoreFaces.data();
+				if (s_atlas.positionEpsilon > 0.0f)
+					meshDecl.epsilon = s_atlas.positionEpsilon;
 #if USE_MESH_DECL_FACE_MATERIAL
 				faceMaterials.resize(object.numIndices / 3);
 				for (uint32_t j = 0; j < object.numMeshes; j++) {
@@ -496,7 +501,7 @@ static void atlasGenerateThread()
 			}
 		}
 	}
-	if (firstRun || s_atlas.useUvMeshChanged || s_atlas.options.chartChanged) {
+	if (firstRun || s_atlas.useUvMeshChanged || s_atlas.positionEpsilonChanged || s_atlas.options.chartChanged) {
 #if USE_LIBIGL
 		if (s_atlas.options.paramMethod != ParamMethod::LSCM)
 			s_atlas.options.chart.paramFunc = atlasParameterizationCallback;
@@ -511,7 +516,7 @@ static void atlasGenerateThread()
 			return;
 		}
 	}
-	if (firstRun || s_atlas.useUvMeshChanged || s_atlas.options.chartChanged || s_atlas.options.packChanged) {
+	if (firstRun || s_atlas.useUvMeshChanged || s_atlas.positionEpsilonChanged || s_atlas.options.chartChanged || s_atlas.options.packChanged) {
 		xatlas::PackCharts(s_atlas.data, s_atlas.options.pack);
 		if (s_atlas.status.getCancel()) {
 			s_atlas.options.packChanged = true; // Force PackCharts to be called next time.
@@ -710,7 +715,7 @@ void atlasGenerate()
 {
 	if (!(s_atlas.status.get() == AtlasStatus::NotGenerated || s_atlas.status.get() == AtlasStatus::Ready))
 		return;
-	if (s_atlas.data && !s_atlas.options.chartChanged && !s_atlas.options.packChanged && s_atlas.useUvMesh == s_atlas.options.useUvMesh) {
+	if (s_atlas.data && !s_atlas.options.chartChanged && !s_atlas.options.packChanged && s_atlas.useUvMesh == s_atlas.options.useUvMesh && s_atlas.positionEpsilon == s_atlas.options.positionEpsilon) {
 		// Already have an atlas and none of the options that affect atlas creation have changed.
 		return;
 	}
@@ -721,6 +726,8 @@ void atlasGenerate()
 	s_atlas.status.set(AtlasStatus::Generating);
 	s_atlas.useUvMeshChanged = s_atlas.data && s_atlas.useUvMesh != s_atlas.options.useUvMesh;
 	s_atlas.useUvMesh = s_atlas.options.useUvMesh;
+	s_atlas.positionEpsilonChanged = s_atlas.data && s_atlas.positionEpsilon != s_atlas.options.positionEpsilon;
+	s_atlas.positionEpsilon = s_atlas.options.positionEpsilon;
 	s_atlas.thread = new std::thread(atlasGenerateThread);
 }
 
@@ -945,6 +952,17 @@ void atlasShowGuiOptions()
 		}
 	} else {
 		s_atlas.options.useUvMesh = false;
+	}
+	if (!s_atlas.options.useUvMesh) {
+		ImGui::SetNextItemWidth(100.0f);
+		ImGui::InputFloat("Position epsilon", &s_atlas.options.positionEpsilon, 0.0f, 0.0f, "%.3e");
+		if (s_atlas.options.positionEpsilon < 0.0f)
+			s_atlas.options.positionEpsilon = 0.0f;
+		if (ImGui::IsItemHovered()) {
+			ImGui::BeginTooltip();
+			ImGui::Text("xatlas::MeshDecl::epsilon.\n0 = default: only bitwise-identical positions are colocal (hash matching).\nAbove FLT_EPSILON (1.192e-7): positions within epsilon of each other are colocal (BVH matching), i.e. float coalescence.\nChanging this re-adds the meshes on Generate.");
+			ImGui::EndTooltip();
+		}
 	}
 	ImGui::Spacing();
 	const float indent = 12.0f;
